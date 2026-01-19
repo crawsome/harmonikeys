@@ -36,6 +36,7 @@ class MusicState:
         self.voice3_index = 14
         self.voice4_index = 21
         self.base_freq = 110.0  # A2
+        self.base_midi = 45  # A2 (matches base_freq)
 
     def get_frequency(self, scale_index):
         """Convert scale index to frequency using Dorian mode"""
@@ -44,6 +45,17 @@ class MusicState:
         position = scale_index % 7
         semitones = octave * 12 + [0, 2, 3, 5, 7, 9, 10][position]
         return self.base_freq * (2 ** (semitones / 12))
+
+    def get_note_name(self, scale_index):
+        """Convert scale index to note name (with octave)"""
+        octave = scale_index // 7
+        position = scale_index % 7
+        semitones = octave * 12 + [0, 2, 3, 5, 7, 9, 10][position]
+
+        midi = self.base_midi + semitones
+        note = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][midi % 12]
+        note_octave = (midi // 12) - 1
+        return f"{note}{note_octave}"
 
     def move_voice1(self, steps, char):
         """Move voice 1"""
@@ -360,11 +372,11 @@ def on_press(key):
                 audio_queue.put(action)
 
                 symbol = '·' if action['type'] == 'rest' else char
-                f1 = music_state.get_frequency(music_state.voice1_index)
-                f2 = music_state.get_frequency(music_state.voice2_index)
-                f3 = music_state.get_frequency(music_state.voice3_index)
-                f4 = music_state.get_frequency(music_state.voice4_index)
-                print(f"{symbol} -> V1:{f1:.0f} V2:{f2:.0f} V3:{f3:.0f} V4:{f4:.0f}Hz")
+                n1 = music_state.get_note_name(music_state.voice1_index)
+                n2 = music_state.get_note_name(music_state.voice2_index)
+                n3 = music_state.get_note_name(music_state.voice3_index)
+                n4 = music_state.get_note_name(music_state.voice4_index)
+                print(f"{symbol} -> V1:{n1} V2:{n2} V3:{n3} V4:{n4}")
 
     except AttributeError:
         pass
