@@ -2,6 +2,8 @@
 
 **HarmoniKeys** turns typing into a live 4‑voice harmony generator with a **PySide6 GUI** for configuring **key + scale/mode**, **octave range**, **timbre per voice**, and **per‑key interval mappings**. Changes are **live** while the app is open: the **global keyboard listener** keeps running in the background, and each keystroke plays a 4‑note voicing based on your mappings.
 
+[See video demo here](https://drive.google.com/file/d/1ibVzbqugzJ-O19B82keG8lHv-geQ8fAn/view?usp=sharing)
+
 Coded with human ideas, and input from my guitarscalechart / pymusicgen apps. 
 
 Cursor did the heavy lifting of the app structure and adding features I asked for. 
