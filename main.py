@@ -16,10 +16,11 @@ import string
 from music21 import chord as m21chord
 from music21 import pitch as m21pitch
 from pynput import keyboard
-from PySide6.QtCore import Qt, QCoreApplication, QObject, Signal, QUrl
+from PySide6.QtCore import Qt, QCoreApplication, QObject, Signal, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QGridLayout,
     QGroupBox,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -1026,6 +1028,11 @@ class MelotypeConfigWindow(QMainWindow):
         self.setMinimumWidth(900)
 
         self._build_menu()
+        self._play_timer = QTimer(self)
+        self._play_timer.setInterval(170)
+        self._play_timer.timeout.connect(self._play_next_char)
+        self._play_text = ""
+        self._play_idx = 0
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -1546,6 +1553,9 @@ class MelotypeConfigWindow(QMainWindow):
         help_lbl.setWordWrap(True)
         layout.addWidget(help_lbl)
 
+        credit_lbl = QLabel("Made by github.com/crawsome")
+        layout.addWidget(credit_lbl)
+
         box = QGroupBox("Quick setup")
         layout.addWidget(box)
         grid = QGridLayout(box)
@@ -1636,6 +1646,29 @@ class MelotypeConfigWindow(QMainWindow):
         now_grid.setColumnMinimumWidth(6, 260)
         now_grid.setColumnStretch(6, 1)
 
+        test_box = QGroupBox("Test Typing")
+        layout.addWidget(test_box)
+        test_v = QVBoxLayout(test_box)
+        test_help = QLabel("Use this box to test without relying on global keyboard input. Click Play to queue the text sequentially.")
+        test_help.setWordWrap(True)
+        test_v.addWidget(test_help)
+
+        test_row = QHBoxLayout()
+        test_v.addLayout(test_row)
+
+        self.test_typing = QPlainTextEdit()
+        self.test_typing.setPlaceholderText("Made by github.com/crawsome")
+        self.test_typing.setMaximumHeight(90)
+        test_row.addWidget(self.test_typing, 1)
+
+        self.use_space_rests_cb = QCheckBox("Use Spaces are Rests")
+        self.use_space_rests_cb.setChecked(True)
+        test_row.addWidget(self.use_space_rests_cb)
+
+        self.play_text_btn = QPushButton("Play")
+        self.play_text_btn.clicked.connect(self._on_play_text_clicked)
+        test_row.addWidget(self.play_text_btn)
+
         layout.addStretch(1)
         return tab
 
@@ -1654,6 +1687,38 @@ class MelotypeConfigWindow(QMainWindow):
             self.note_labels[i].setText(cur[i] if enabled[i] else "Silent")
         self.prev_chord_label.setText(str(payload.get("prev_chord", "—")))
         self.chord_label.setText(str(payload.get("chord", "—")))
+
+    def _on_play_text_clicked(self):
+        self._play_text = self.test_typing.toPlainText() or self.test_typing.placeholderText()
+        self._play_idx = 0
+        self.play_text_btn.setEnabled(False)
+        self._play_timer.start()
+
+    def _play_next_char(self):
+        if self._play_idx >= len(self._play_text):
+            self._play_timer.stop()
+            self.play_text_btn.setEnabled(True)
+            return
+
+        ch_raw = self._play_text[self._play_idx]
+        self._play_idx += 1
+
+        if ch_raw == "\r":
+            return
+
+        if ch_raw == " " and self.use_space_rests_cb.isChecked():
+            audio_queue.put({"type": "rest", "duration": 0.15, "char": "·", "v1": 0, "v2": 0, "v3": 0, "v4": 0})
+            return
+
+        if ch_raw.isalpha():
+            action = get_character_action(ch_raw.lower(), is_upper=ch_raw.isupper(), is_digit=False)
+        elif ch_raw.isdigit():
+            action = get_character_action(ch_raw, is_upper=False, is_digit=True)
+        else:
+            action = get_character_action(ch_raw, is_upper=False, is_digit=False)
+
+        if action and not (ch_raw == " " and not self.use_space_rests_cb.isChecked() and action.get("type") == "rest"):
+            audio_queue.put(action)
 
     def _on_interval_changed(self, group_name: str, voice_key: str, pos: int):
         cb = self.interval_combos[(group_name, voice_key, pos)]
