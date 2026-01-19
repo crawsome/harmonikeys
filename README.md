@@ -13,8 +13,8 @@
 - **Configurable interval mappings (live)**:
   - **Letters** (`a-z`) use letter-frequency buckets (Top 8 / Next 8 / Next 6 / Rarest 4) and every cell is editable.
   - **Punctuation + symbols + special keys** are editable per voice (including SPACE/ENTER/TAB/BACKSPACE/DELETE and many symbols).
-  - **Numbers** (`0–9`) drive **voices 1–2 only** (configurable per digit).
-  - **Capital letters** (`A–Z`) drive **voices 3–4 only**.
+  - **Numbers** (`0–9`) drive **voices 3–4 only** (configurable per digit).
+  - **Capital letters** (`A–Z`) drive **voices 1–2 only**.
 - **Silent per-voice mapping**: every mapping dropdown supports **Silent** (that voice won’t play for that key) and supports step value **0**.
 - **Punctuation defaults are frequency-tiered**: punctuation columns are sorted by English-ish usage frequency and prefilled so common symbols move less and rare symbols jump more (still fully editable).
 - **Timbres (per voice)**: multiple built-in synth timbres (sine/triangle/square/saw/pulse + presets like organ/strings/brass/bell/FM EP).
@@ -60,8 +60,8 @@ Press keys while the app is running (global listener). Press **ESC** to quit.
 ## Controls
 
 - **Letters** (`a-z`): configurable movements for all 4 voices.
-- **Capital letters** (`A-Z`): **voices 3–4 only**.
-- **Digits** (`0-9`): **voices 1–2 only**.
+- **Capital letters** (`A-Z`): **voices 1–2 only**.
+- **Digits** (`0-9`): **voices 3–4 only**.
 - **SPACE/ENTER/TAB/BACKSPACE/DELETE**: configurable (default = rest if all 4 voice values are 0).
 - **ESC**: exit.
 

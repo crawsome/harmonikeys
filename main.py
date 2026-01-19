@@ -12,6 +12,7 @@ import time
 import configparser
 import os
 from typing import Optional
+import string
 from music21 import chord as m21chord
 from music21 import pitch as m21pitch
 from pynput import keyboard
@@ -313,7 +314,7 @@ GROUPS = {
 TENSION_OPTIONS = list(MODE_DEFS.keys())
 
 PUNCT_SYMBOLS: list[tuple[str, str]] = [
-    ("SPACE", " "),
+    ("SPC", " "),
     (",", ","),
     (".", "."),
     ("'", "'"),
@@ -347,19 +348,19 @@ PUNCT_SYMBOLS: list[tuple[str, str]] = [
     ("&", "&"),
     ("*", "*"),
     ("TAB", "\t"),
-    ("BACKSPACE", "\b"),
-    ("DELETE", "\x7f"),
-    ("ENTER", "\n"),
+    ("BKSP", "\b"),
+    ("DEL", "\x7f"),
+    ("ENT", "\n"),
 ]
 
 DIGIT_MOVES = {
-    "v1": {str(d): d for d in range(10)},
-    "v2": {str(d): -d for d in range(10)},
+    "v3": {str(d): d for d in range(10)},
+    "v4": {str(d): -d for d in range(10)},
 }
 
 PUNCT_MOVES = {"v1": {}, "v2": {}, "v3": {}, "v4": {}}
 PUNCT_SILENT = {"v1": {}, "v2": {}, "v3": {}, "v4": {}}
-DIGIT_SILENT = {"v1": {str(d): 0 for d in range(10)}, "v2": {str(d): 0 for d in range(10)}}
+DIGIT_SILENT = {"v3": {str(d): 0 for d in range(10)}, "v4": {str(d): 0 for d in range(10)}}
 
 # Per-letter bucket silence flags (aligned to each group's letters list)
 LETTER_SILENT = {
@@ -452,19 +453,19 @@ def get_character_action(char: str, is_upper: bool, is_digit: bool):
     """Map characters to musical actions"""
     if is_digit:
         with STATE_LOCK:
-            if char not in DIGIT_MOVES["v1"]:
+            if char not in DIGIT_MOVES["v3"]:
                 return None
-            v1_steps = DIGIT_MOVES["v1"][char]
-            v2_steps = DIGIT_MOVES["v2"][char]
-            v1_on = DIGIT_SILENT["v1"][char] == 0
-            v2_on = DIGIT_SILENT["v2"][char] == 0
+            v3_steps = DIGIT_MOVES["v3"][char]
+            v4_steps = DIGIT_MOVES["v4"][char]
+            v3_on = DIGIT_SILENT["v3"][char] == 0
+            v4_on = DIGIT_SILENT["v4"][char] == 0
         return {
             "type": "note",
-            "v1": v1_steps,
-            "v2": v2_steps,
-            "v3": 0,
-            "v4": 0,
-            "enabled": (v1_on, v2_on, False, False),
+            "v1": 0,
+            "v2": 0,
+            "v3": v3_steps,
+            "v4": v4_steps,
+            "enabled": (False, False, v3_on, v4_on),
             "source": "digits",
             "duration": 0.15,
             "char": char,
@@ -511,11 +512,11 @@ def get_character_action(char: str, is_upper: bool, is_digit: bool):
     if is_upper:
         return {
             "type": "note",
-            "v1": 0,
-            "v2": 0,
-            "v3": v3_steps,
-            "v4": v4_steps,
-            "enabled": (False, False, v3_on, v4_on),
+            "v1": v1_steps,
+            "v2": v2_steps,
+            "v3": 0,
+            "v4": 0,
+            "enabled": (v1_on, v2_on, False, False),
             "source": "letters",
             "duration": 0.15,
             "char": char,
@@ -699,10 +700,10 @@ def audio_worker():
                     with STATE_LOCK:
                         enabled = action.get("enabled", (True, True, True, True))
                         source = action.get("source", "letters")
-                        v1_map = DIGIT_MOVES["v1"] if source == "digits" else voice1_movements
-                        v2_map = DIGIT_MOVES["v2"] if source == "digits" else voice2_movements
-                        v3_map = voice3_movements
-                        v4_map = voice4_movements
+                        v1_map = voice1_movements
+                        v2_map = voice2_movements
+                        v3_map = DIGIT_MOVES["v3"] if source == "digits" else voice3_movements
+                        v4_map = DIGIT_MOVES["v4"] if source == "digits" else voice4_movements
                         prev_notes = [
                             music_state.get_note_name(music_state.voice1_index),
                             music_state.get_note_name(music_state.voice2_index),
@@ -782,11 +783,17 @@ def audio_worker():
 
 
 last_key_time = 0
+shift_down = False
 
 
 def on_press(key):
     """Handle key press events"""
     global last_key_time
+    global shift_down
+
+    if key in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r):
+        shift_down = True
+        return
 
     current_time = time.time()
     # Debounce
@@ -809,7 +816,7 @@ def on_press(key):
             action = get_character_action(char_raw, is_upper=False, is_digit=False)
         elif hasattr(key, 'char') and key.char is not None:
             char_raw = key.char
-            is_upper = char_raw.isalpha() and char_raw.isupper()
+            is_upper = char_raw.isalpha() and (char_raw.isupper() or shift_down)
             is_digit = char_raw.isdigit()
             char = char_raw.lower() if char_raw.isalpha() else char_raw
             action = get_character_action(char, is_upper=is_upper, is_digit=is_digit)
@@ -827,6 +834,11 @@ def on_press(key):
 def on_release(key):
     """Handle key release - exit on ESC"""
     global running
+    global shift_down
+
+    if key in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r):
+        shift_down = False
+        return
 
     if key == keyboard.Key.esc:
         print("\nShutting down...")
@@ -871,6 +883,16 @@ class PlaybackBus(QObject):
 
 
 PLAYBACK_BUS: Optional[PlaybackBus] = None
+
+
+def letter_group_pos(letter: str) -> tuple[str, int]:
+    if letter in GROUPS["Top 8"]["letters"]:
+        return "Top 8", GROUPS["Top 8"]["letters"].index(letter)
+    if letter in GROUPS["Next 8"]["letters"]:
+        return "Next 8", GROUPS["Next 8"]["letters"].index(letter)
+    if letter in GROUPS["Next 6"]["letters"]:
+        return "Next 6", GROUPS["Next 6"]["letters"].index(letter)
+    return "Rarest 4", GROUPS["Rarest 4"]["letters"].index(letter)
 def save_config():
     cfg = configparser.ConfigParser()
 
@@ -906,7 +928,7 @@ def save_config():
         )
 
     cfg["numbers"] = {}
-    for voice_key in ["v1", "v2"]:
+    for voice_key in ["v3", "v4"]:
         cfg["numbers"][voice_key] = _csv_tokens(
             [SILENT_TOKEN if DIGIT_SILENT[voice_key][str(x)] else str(DIGIT_MOVES[voice_key][str(x)]) for x in range(10)]
         )
@@ -973,8 +995,8 @@ def load_config():
                             PUNCT_SILENT[voice_key][sym] = 0
 
         if "numbers" in cfg:
-            if all(vk in cfg["numbers"] for vk in ["v1", "v2"]):
-                for voice_key in ["v1", "v2"]:
+            if all(vk in cfg["numbers"] for vk in ["v3", "v4"]):
+                for voice_key in ["v3", "v4"]:
                     tokens = _parse_csv_tokens(cfg["numbers"][voice_key])
                     for i, d in enumerate([str(x) for x in range(10)]):
                         tok = tokens[i]
@@ -985,12 +1007,13 @@ def load_config():
                             DIGIT_MOVES[voice_key][d] = int(tok)
                             DIGIT_SILENT[voice_key][d] = 0
             else:
-                for voice_key in ["v1", "v2"]:
+                # Old format / older routing support (v1/v2) -> map into v3/v4
+                for src_voice, dst_voice in [("v1", "v3"), ("v2", "v4")]:
                     for d in [str(x) for x in range(10)]:
-                        k = f"{voice_key}:{d}"
+                        k = f"{src_voice}:{d}"
                         if k in cfg["numbers"]:
-                            DIGIT_MOVES[voice_key][d] = int(cfg["numbers"][k])
-                            DIGIT_SILENT[voice_key][d] = 0
+                            DIGIT_MOVES[dst_voice][d] = int(cfg["numbers"][k])
+                            DIGIT_SILENT[dst_voice][d] = 0
 
         init_letter_movements()
         save_config()
@@ -1095,7 +1118,7 @@ class MelotypeConfigWindow(QMainWindow):
                 for g in GROUPS
             }
             punct_snapshot = {vk: dict(PUNCT_MOVES[vk]) for vk in ["v1", "v2", "v3", "v4"]}
-            digit_snapshot = {vk: dict(DIGIT_MOVES[vk]) for vk in ["v1", "v2"]}
+            digit_snapshot = {vk: dict(DIGIT_MOVES[vk]) for vk in ["v3", "v4"]}
 
         for combo in [self.key_combo, self.basic_key_combo]:
             combo.blockSignals(True)
@@ -1125,7 +1148,7 @@ class MelotypeConfigWindow(QMainWindow):
         for (group_name, voice_key, pos), cb in self.interval_combos.items():
             cb.blockSignals(True)
             if LETTER_SILENT[group_name][voice_key][pos]:
-                cb.setCurrentText("Silent")
+                cb.setCurrentText("S")
             else:
                 cb.setCurrentText(str(group_snapshot[group_name][voice_key][pos]))
             cb.blockSignals(False)
@@ -1133,7 +1156,7 @@ class MelotypeConfigWindow(QMainWindow):
         for (voice_key, sym), cb in self.punct_combos.items():
             cb.blockSignals(True)
             if PUNCT_SILENT[voice_key].get(sym, 0):
-                cb.setCurrentText("Silent")
+                cb.setCurrentText("S")
             else:
                 cb.setCurrentText(str(punct_snapshot[voice_key][sym]))
             cb.blockSignals(False)
@@ -1141,9 +1164,18 @@ class MelotypeConfigWindow(QMainWindow):
         for (voice_key, digit), cb in self.digit_combos.items():
             cb.blockSignals(True)
             if DIGIT_SILENT[voice_key][digit]:
-                cb.setCurrentText("Silent")
+                cb.setCurrentText("S")
             else:
                 cb.setCurrentText(str(digit_snapshot[voice_key][digit]))
+            cb.blockSignals(False)
+
+        for (voice_key, letter), cb in self.capital_combos.items():
+            group_name, pos = letter_group_pos(letter)
+            cb.blockSignals(True)
+            if LETTER_SILENT[group_name][voice_key][pos]:
+                cb.setCurrentText("S")
+            else:
+                cb.setCurrentText(str(group_snapshot[group_name][voice_key][pos]))
             cb.blockSignals(False)
 
     def _build_config_tab(self) -> QWidget:
@@ -1247,6 +1279,11 @@ class MelotypeConfigWindow(QMainWindow):
         interval_value_options = list(range(-8, 9))
         misc_value_options = list(range(-8, 9))
 
+        def _style_compact_combo(cb: QComboBox):
+            cb.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+            cb.setMinimumContentsLength(2)
+            return cb
+
         self.interval_combos: dict[tuple[str, str, int], QComboBox] = {}
 
         for group_name, group in GROUPS.items():
@@ -1267,12 +1304,13 @@ class MelotypeConfigWindow(QMainWindow):
                 grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
                 for col, _letter in enumerate(group["letters"]):
                     cb = QComboBox()
-                    cb.addItem("Silent", "silent")
+                    _style_compact_combo(cb)
+                    cb.addItem("S", "silent")
                     for v in interval_value_options:
                         cb.addItem(str(v), v)
                     current = group[voice_key][col]
                     if LETTER_SILENT[group_name][voice_key][col]:
-                        cb.setCurrentText("Silent")
+                        cb.setCurrentText("S")
                     else:
                         cb.setCurrentText(str(current))
                     cb.currentIndexChanged.connect(
@@ -1291,28 +1329,66 @@ class MelotypeConfigWindow(QMainWindow):
         punct_v.addLayout(punct_grid)
         punct_grid.addWidget(QLabel(""), 0, 0)
         for col, (label, _sym) in enumerate(PUNCT_SYMBOLS):
-            punct_grid.addWidget(QLabel(label), 0, col + 1, alignment=Qt.AlignCenter)
+            h = QLabel(label)
+            h.setAlignment(Qt.AlignCenter)
+            h.setWordWrap(True)
+            punct_grid.addWidget(h, 0, col + 1, alignment=Qt.AlignCenter)
 
         self.punct_combos: dict[tuple[str, str], QComboBox] = {}
         for row, voice_key in enumerate(["v1", "v2", "v3", "v4"]):
             punct_grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
             for col, (_label, ch) in enumerate(PUNCT_SYMBOLS):
                 cb = QComboBox()
-                cb.addItem("Silent", "silent")
+                _style_compact_combo(cb)
+                cb.addItem("S", "silent")
                 for v in misc_value_options:
                     cb.addItem(str(v), v)
                 if PUNCT_SILENT[voice_key].get(ch, 0):
-                    cb.setCurrentText("Silent")
+                    cb.setCurrentText("S")
                 else:
                     cb.setCurrentText(str(PUNCT_MOVES[voice_key][ch]))
                 cb.currentIndexChanged.connect(lambda _idx, vk=voice_key, c=ch: self._on_punct_changed(vk, c))
                 self.punct_combos[(voice_key, ch)] = cb
                 punct_grid.addWidget(cb, row + 1, col + 1)
 
-        digits_box = QGroupBox("Numbers (top 2 voices only)")
+        caps_box = QGroupBox("Capitals (voices 1–2 only)")
+        layout.addWidget(caps_box)
+        caps_v = QVBoxLayout(caps_box)
+        caps_help = QLabel("Use this section to set interval moves for A–Z. Capitals only drive voices 1–2.")
+        caps_help.setWordWrap(True)
+        caps_v.addWidget(caps_help)
+        caps_grid = QGridLayout()
+        caps_v.addLayout(caps_grid)
+
+        caps_grid.addWidget(QLabel(""), 0, 0)
+        for col, ch in enumerate(string.ascii_uppercase):
+            caps_grid.addWidget(QLabel(ch), 0, col + 1, alignment=Qt.AlignCenter)
+
+        self.capital_combos: dict[tuple[str, str], QComboBox] = {}
+        for row, voice_key in enumerate(["v1", "v2"]):
+            caps_grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
+            for col, upper in enumerate(string.ascii_uppercase):
+                letter = upper.lower()
+                group_name, pos = letter_group_pos(letter)
+                cb = QComboBox()
+                _style_compact_combo(cb)
+                cb.addItem("S", "silent")
+                for v in interval_value_options:
+                    cb.addItem(str(v), v)
+                if LETTER_SILENT[group_name][voice_key][pos]:
+                    cb.setCurrentText("S")
+                else:
+                    cb.setCurrentText(str(GROUPS[group_name][voice_key][pos]))
+                cb.currentIndexChanged.connect(
+                    lambda _idx, vk=voice_key, ltr=letter: self._on_capital_changed(vk, ltr)
+                )
+                self.capital_combos[(voice_key, letter)] = cb
+                caps_grid.addWidget(cb, row + 1, col + 1)
+
+        digits_box = QGroupBox("Numbers (voices 3–4 only)")
         layout.addWidget(digits_box)
         digits_v = QVBoxLayout(digits_box)
-        digits_help = QLabel("Use this section to set interval moves for digits 0–9. Numbers only drive voices 1–2.")
+        digits_help = QLabel("Use this section to set interval moves for digits 0–9. Numbers only drive voices 3–4.")
         digits_help.setWordWrap(True)
         digits_v.addWidget(digits_help)
         digits_grid = QGridLayout()
@@ -1322,15 +1398,16 @@ class MelotypeConfigWindow(QMainWindow):
             digits_grid.addWidget(QLabel(d), 0, col + 1, alignment=Qt.AlignCenter)
 
         self.digit_combos: dict[tuple[str, str], QComboBox] = {}
-        for row, voice_key in enumerate(["v1", "v2"]):
+        for row, voice_key in enumerate(["v3", "v4"]):
             digits_grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
             for col, d in enumerate([str(x) for x in range(10)]):
                 cb = QComboBox()
-                cb.addItem("Silent", "silent")
+                _style_compact_combo(cb)
+                cb.addItem("S", "silent")
                 for v in misc_value_options:
                     cb.addItem(str(v), v)
                 if DIGIT_SILENT[voice_key][d]:
-                    cb.setCurrentText("Silent")
+                    cb.setCurrentText("S")
                 else:
                     cb.setCurrentText(str(DIGIT_MOVES[voice_key][d]))
                 cb.currentIndexChanged.connect(lambda _idx, vk=voice_key, digit=d: self._on_digit_changed(vk, digit))
@@ -1339,6 +1416,24 @@ class MelotypeConfigWindow(QMainWindow):
 
         layout.addStretch(1)
         return tab
+
+    def _on_capital_changed(self, voice_key: str, letter: str):
+        cb = self.capital_combos[(voice_key, letter)]
+        group_name, pos = letter_group_pos(letter)
+        with STATE_LOCK:
+            if cb.currentData() == "silent":
+                GROUPS[group_name][voice_key][pos] = 0
+                LETTER_SILENT[group_name][voice_key][pos] = 1
+            else:
+                value = int(cb.currentData())
+                GROUPS[group_name][voice_key][pos] = value
+                LETTER_SILENT[group_name][voice_key][pos] = 0
+            init_letter_movements()
+
+        other = self.interval_combos[(group_name, voice_key, pos)]
+        other.blockSignals(True)
+        other.setCurrentText("S" if LETTER_SILENT[group_name][voice_key][pos] else str(GROUPS[group_name][voice_key][pos]))
+        other.blockSignals(False)
 
     def _scale_note_options(self) -> list[tuple[str, int]]:
         with STATE_LOCK:
