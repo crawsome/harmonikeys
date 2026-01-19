@@ -1,6 +1,6 @@
-## Melotype
+## HarmoniKeys
 
-**Melotype** turns typing into a live 4‑voice harmony generator with a **PySide6 GUI** for configuring **key + scale/mode**, **octave range**, **timbre per voice**, and **per‑key interval mappings**. Changes are **live** while the app is open: the **global keyboard listener** keeps running in the background, and each keystroke plays a 4‑note voicing based on your mappings.
+**HarmoniKeys** turns typing into a live 4‑voice harmony generator with a **PySide6 GUI** for configuring **key + scale/mode**, **octave range**, **timbre per voice**, and **per‑key interval mappings**. Changes are **live** while the app is open: the **global keyboard listener** keeps running in the background, and each keystroke plays a 4‑note voicing based on your mappings.
 
 ## Features
 
@@ -100,7 +100,7 @@ Press keys while the app is running (global listener). Press **ESC** to quit.
 
 ## Console output (matrix)
 
-On startup, Melotype prints the current notes:
+On startup, HarmoniKeys prints the current notes:
 
 ```text
     <V1 note>    <V2 note>    <V3 note>    <V4 note>
