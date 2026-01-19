@@ -241,6 +241,24 @@ TIMBRE_OPTIONS = [
 
 TIMBRES = ["Organ", "Organ", "Organ", "Organ"]  # per voice (must be values from TIMBRE_OPTIONS)
 
+TIMBRE_PRESETS: list[tuple[str, list[str]]] = [
+    ("Classic Organ Choir", ["Organ", "Organ", "Organ", "Organ"]),
+    ("Soft Pads", ["Soft Organ", "Strings", "Strings", "Soft Organ"]),
+    ("Bright Synth Stack", ["Saw", "Square", "Pulse 25%", "Triangle"]),
+    ("FM Keys + Pad", ["FM EP", "FM EP", "Strings", "Strings"]),
+    ("Bell Choir", ["Bell", "Bell", "Sine", "Triangle"]),
+    ("Brass Section", ["Brass", "Brass", "Brass", "Saw"]),
+    ("Pulse Ensemble", ["Pulse 12.5%", "Pulse 25%", "Square", "Triangle"]),
+    ("Warm Trio + Lead", ["Triangle", "Soft Organ", "Strings", "Saw"]),
+    ("Minimal", ["Sine", "Sine", "Sine", "Sine"]),
+    ("Hybrid Organ + FM", ["Organ", "FM EP", "Soft Organ", "Bell"]),
+    ("Chiptune 1", ["Triangle", "Pulse 12.5%", "Square", "Pulse 25%"]),
+    ("Chiptune 2", ["Sine", "Square", "Pulse 25%", "Triangle"]),
+    ("Chiptune 3", ["Triangle", "Square", "Pulse 12.5%", "Sine"]),
+    ("Chiptune 4", ["Square", "Pulse 25%", "Square", "Pulse 12.5%"]),
+    ("Chiptune 5", ["Triangle", "Saw", "Pulse 25%", "Square"]),
+]
+
 DEFAULT_GROUPS = {
     "Top 8": {
         "letters": list(LETTER_FREQ[:8]),
@@ -946,6 +964,7 @@ class MelotypeConfigWindow(QMainWindow):
             cb.blockSignals(True)
             cb.setCurrentText(timbres[i])
             cb.blockSignals(False)
+        self._sync_tone_preset_combo_from_timbres(timbres)
 
         for (group_name, voice_key, pos), cb in self.interval_combos.items():
             cb.blockSignals(True)
@@ -1019,16 +1038,24 @@ class MelotypeConfigWindow(QMainWindow):
         tone_v.addLayout(tone_layout)
         layout.addWidget(tone_box)
 
+        tone_layout.addWidget(QLabel("Preset"), 0, 0)
+        self.tone_preset_combo = QComboBox()
+        self.tone_preset_combo.addItem("Custom", None)
+        for name, timbres in TIMBRE_PRESETS:
+            self.tone_preset_combo.addItem(name, timbres)
+        self.tone_preset_combo.currentIndexChanged.connect(self._on_tone_preset_changed)
+        tone_layout.addWidget(self.tone_preset_combo, 0, 1)
+
         self.timbre_combos: list[QComboBox] = []
         for i in range(4):
-            tone_layout.addWidget(QLabel(f"Voice {i + 1} timbre"), i, 0)
+            tone_layout.addWidget(QLabel(f"Voice {i + 1} timbre"), i + 1, 0)
             combo = QComboBox()
             for timbre in TIMBRE_OPTIONS:
                 combo.addItem(timbre, timbre)
             combo.setCurrentText(TIMBRES[i])
             combo.currentIndexChanged.connect(lambda _idx, v=i: self._on_timbre_changed(v))
             self.timbre_combos.append(combo)
-            tone_layout.addWidget(combo, i, 1)
+            tone_layout.addWidget(combo, i + 1, 1)
 
         layout.addStretch(1)
         return tab
@@ -1185,6 +1212,33 @@ class MelotypeConfigWindow(QMainWindow):
     def _on_timbre_changed(self, voice_i: int):
         with STATE_LOCK:
             TIMBRES[voice_i] = self.timbre_combos[voice_i].currentData()
+            timbres = TIMBRES[:]
+        self._sync_tone_preset_combo_from_timbres(timbres)
+
+    def _sync_tone_preset_combo_from_timbres(self, timbres: list[str]):
+        match_name = None
+        for name, preset_timbres in TIMBRE_PRESETS:
+            if preset_timbres == timbres:
+                match_name = name
+                break
+        self.tone_preset_combo.blockSignals(True)
+        if match_name is None:
+            self.tone_preset_combo.setCurrentIndex(0)  # Custom
+        else:
+            self.tone_preset_combo.setCurrentText(match_name)
+        self.tone_preset_combo.blockSignals(False)
+
+    def _on_tone_preset_changed(self, _idx: int):
+        preset = self.tone_preset_combo.currentData()
+        if preset is None:
+            return
+        with STATE_LOCK:
+            for i in range(4):
+                TIMBRES[i] = preset[i]
+        for i, cb in enumerate(self.timbre_combos):
+            cb.blockSignals(True)
+            cb.setCurrentText(preset[i])
+            cb.blockSignals(False)
 
     def _on_tension_changed(self, _idx: int):
         with STATE_LOCK:
