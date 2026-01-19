@@ -9,8 +9,12 @@ import pyaudio
 import queue
 import threading
 import time
+import configparser
+import os
 from pynput import keyboard
 from PySide6.QtCore import Qt, QCoreApplication
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -19,6 +23,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -51,6 +56,7 @@ MIN_SCALE_INDEX = 0
 audio_queue = queue.Queue()
 running = True
 STATE_LOCK = threading.RLock()
+CONFIG_PATH = "config.ini"
 
 MODE_STEP_PATTERNS = [
     ("Major", [0, 2, 2, 1, 2, 2, 2, 1]),
@@ -170,93 +176,43 @@ class MusicState:
     def set_voice_indices(self, indices: list[int]):
         self.voice1_index, self.voice2_index, self.voice3_index, self.voice4_index = indices
 
-    def move_voice1(self, steps, char):
-        """Move voice 1"""
-        new_index = self.voice1_index + steps
+    def _move_voice(self, attr_name: str, steps: int, char: str, movement_map: dict[str, int]) -> float:
+        current = getattr(self, attr_name)
+        new_index = current + steps
 
         if new_index > self.max_scale_index:
-            voice1_movements[char] = -voice1_movements[char]
+            movement_map[char] = -movement_map[char]
             overflow = new_index - self.max_scale_index
             reflected = self.max_scale_index - overflow
-            if reflected == self.voice1_index:
+            if reflected == current:
                 reflected -= 1
-            self.voice1_index = reflected
+            setattr(self, attr_name, reflected)
         elif new_index < self.min_scale_index:
-            voice1_movements[char] = -voice1_movements[char]
+            movement_map[char] = -movement_map[char]
             reflected = self.min_scale_index + (self.min_scale_index - new_index)
-            if reflected == self.voice1_index:
+            if reflected == current:
                 reflected += 1
-            self.voice1_index = reflected
+            setattr(self, attr_name, reflected)
         else:
-            self.voice1_index = new_index
+            setattr(self, attr_name, new_index)
 
-        return self.get_frequency(self.voice1_index)
+        return self.get_frequency(getattr(self, attr_name))
+
+    def move_voice1(self, steps, char):
+        """Move voice 1"""
+        return self._move_voice("voice1_index", steps, char, voice1_movements)
 
     def move_voice2(self, steps, char):
         """Move voice 2"""
-        new_index = self.voice2_index + steps
-
-        if new_index > self.max_scale_index:
-            voice2_movements[char] = -voice2_movements[char]
-            overflow = new_index - self.max_scale_index
-            reflected = self.max_scale_index - overflow
-            if reflected == self.voice2_index:
-                reflected -= 1
-            self.voice2_index = reflected
-        elif new_index < self.min_scale_index:
-            voice2_movements[char] = -voice2_movements[char]
-            reflected = self.min_scale_index + (self.min_scale_index - new_index)
-            if reflected == self.voice2_index:
-                reflected += 1
-            self.voice2_index = reflected
-        else:
-            self.voice2_index = new_index
-
-        return self.get_frequency(self.voice2_index)
+        return self._move_voice("voice2_index", steps, char, voice2_movements)
 
     def move_voice3(self, steps, char):
         """Move voice 3"""
-        new_index = self.voice3_index + steps
-
-        if new_index > self.max_scale_index:
-            voice3_movements[char] = -voice3_movements[char]
-            overflow = new_index - self.max_scale_index
-            reflected = self.max_scale_index - overflow
-            if reflected == self.voice3_index:
-                reflected -= 1
-            self.voice3_index = reflected
-        elif new_index < self.min_scale_index:
-            voice3_movements[char] = -voice3_movements[char]
-            reflected = self.min_scale_index + (self.min_scale_index - new_index)
-            if reflected == self.voice3_index:
-                reflected += 1
-            self.voice3_index = reflected
-        else:
-            self.voice3_index = new_index
-
-        return self.get_frequency(self.voice3_index)
+        return self._move_voice("voice3_index", steps, char, voice3_movements)
 
     def move_voice4(self, steps, char):
         """Move voice 4"""
-        new_index = self.voice4_index + steps
-
-        if new_index > self.max_scale_index:
-            voice4_movements[char] = -voice4_movements[char]
-            overflow = new_index - self.max_scale_index
-            reflected = self.max_scale_index - overflow
-            if reflected == self.voice4_index:
-                reflected -= 1
-            self.voice4_index = reflected
-        elif new_index < self.min_scale_index:
-            voice4_movements[char] = -voice4_movements[char]
-            reflected = self.min_scale_index + (self.min_scale_index - new_index)
-            if reflected == self.voice4_index:
-                reflected += 1
-            self.voice4_index = reflected
-        else:
-            self.voice4_index = new_index
-
-        return self.get_frequency(self.voice4_index)
+        return self._move_voice("voice4_index", steps, char, voice4_movements)
 
 
 # Global music state
@@ -327,15 +283,107 @@ GROUPS = {
     for name, group in DEFAULT_GROUPS.items()
 }
 
-PUNCT_MOVES = {
-    "v1": {",": -1, ".": -2},
-    "v2": {",": 1, ".": 2},
-    "v3": {",": -1, ".": 1},
-    "v4": {",": 2, ".": -1},
-}
-
 TENSION_OPTIONS = list(MODE_DEFS.keys())
 
+PUNCT_SYMBOLS: list[tuple[str, str]] = [
+    ("SPACE", " "),
+    (",", ","),
+    (".", "."),
+    ("'", "'"),
+    ('"', '"'),
+    ("-", "-"),
+    ("!", "!"),
+    ("?", "?"),
+    ("(", "("),
+    (")", ")"),
+    (":", ":"),
+    (";", ";"),
+    ("/", "/"),
+    ("[", "["),
+    ("]", "]"),
+    ("_", "_"),
+    ("+", "+"),
+    ("=", "="),
+    ("\\", "\\"),
+    ("|", "|"),
+    ("{", "{"),
+    ("}", "}"),
+    ("<", "<"),
+    (">", ">"),
+    ("~", "~"),
+    ("`", "`"),
+    ("@", "@"),
+    ("#", "#"),
+    ("$", "$"),
+    ("%", "%"),
+    ("^", "^"),
+    ("&", "&"),
+    ("*", "*"),
+    ("TAB", "\t"),
+    ("BACKSPACE", "\b"),
+    ("DELETE", "\x7f"),
+    ("ENTER", "\n"),
+]
+
+DIGIT_MOVES = {
+    "v1": {str(d): d for d in range(10)},
+    "v2": {str(d): -d for d in range(10)},
+}
+
+PUNCT_MOVES = {"v1": {}, "v2": {}, "v3": {}, "v4": {}}
+
+
+def init_punct_moves_by_frequency():
+    common = [sym for _label, sym in PUNCT_SYMBOLS if sym not in (" ", "\n", "\t", "\b", "\x7f")]
+    tiers = [common[:8], common[8:16], common[16:24], common[24:30], common[30:]]
+    tier_patterns = [
+        {
+            "v1": [1, 1, -1, 2, -2, -1, 1, -1],
+            "v2": [-1, -1, 1, -2, 2, 1, -1, 1],
+            "v3": [1, -1, 2, -1, 1, -2, 1, -1],
+            "v4": [-1, 1, -2, 1, -1, 2, -1, 1],
+        },
+        {
+            "v1": [2, -2, 1, -1, 2, 1, -2, -3],
+            "v2": [-2, 2, -1, 1, -2, -1, 2, 3],
+            "v3": [2, -1, 2, -2, 1, -2, 2, -3],
+            "v4": [-2, 1, -2, 2, -1, 2, -2, 3],
+        },
+        {
+            "v1": [3, -3, 2, -2, 3, -3, 2, -2],
+            "v2": [-3, 3, -2, 2, -3, 3, -2, 2],
+            "v3": [3, -2, 3, -3, 2, -3, 2, -2],
+            "v4": [-3, 2, -3, 3, -2, 3, -2, 2],
+        },
+        {
+            "v1": [5, -5, 4, -4, 5, -5],
+            "v2": [-5, 5, -4, 4, -5, 5],
+            "v3": [4, -5, 5, -4, 4, -5],
+            "v4": [-4, 5, -5, 4, -4, 5],
+        },
+        {
+            "v1": [7, -7, 6, -6],
+            "v2": [-7, 7, -6, 6],
+            "v3": [6, -7, 7, -6],
+            "v4": [-6, 7, -7, 6],
+        },
+    ]
+
+    for voice_key in ["v1", "v2", "v3", "v4"]:
+        PUNCT_MOVES[voice_key].clear()
+        PUNCT_MOVES[voice_key][" "] = 0
+        PUNCT_MOVES[voice_key]["\n"] = 0
+        PUNCT_MOVES[voice_key]["\t"] = 0
+        PUNCT_MOVES[voice_key]["\b"] = 0
+        PUNCT_MOVES[voice_key]["\x7f"] = 0
+
+    for tier_syms, patterns in zip(tiers, tier_patterns):
+        for i, sym in enumerate(tier_syms):
+            for voice_key in ["v1", "v2", "v3", "v4"]:
+                pat = patterns[voice_key]
+                PUNCT_MOVES[voice_key][sym] = pat[i % len(pat)]
+
+init_punct_moves_by_frequency()
 
 def init_letter_movements():
     """Initialize letter movement mappings for 4 voices"""
@@ -351,25 +399,32 @@ def init_letter_movements():
             voice3_movements[ch] = group["v3"][i]
             voice4_movements[ch] = group["v4"][i]
 
-    voice1_movements[","] = PUNCT_MOVES["v1"][","]
-    voice1_movements["."] = PUNCT_MOVES["v1"]["."]
-    voice2_movements[","] = PUNCT_MOVES["v2"][","]
-    voice2_movements["."] = PUNCT_MOVES["v2"]["."]
-    voice3_movements[","] = PUNCT_MOVES["v3"][","]
-    voice3_movements["."] = PUNCT_MOVES["v3"]["."]
-    voice4_movements[","] = PUNCT_MOVES["v4"][","]
-    voice4_movements["."] = PUNCT_MOVES["v4"]["."]
+    for _label, sym in PUNCT_SYMBOLS:
+        voice1_movements[sym] = PUNCT_MOVES["v1"][sym]
+        voice2_movements[sym] = PUNCT_MOVES["v2"][sym]
+        voice3_movements[sym] = PUNCT_MOVES["v3"][sym]
+        voice4_movements[sym] = PUNCT_MOVES["v4"][sym]
 
 
-# Initialize on load
-init_letter_movements()
-
-
-def get_character_action(char):
+def get_character_action(char: str, is_upper: bool, is_digit: bool):
     """Map characters to musical actions"""
-
-    if char == ' ':
-        return {'type': 'rest', 'duration': 0.15, 'char': '·', 'v1': 0, 'v2': 0, 'v3': 0, 'v4': 0}
+    if is_digit:
+        with STATE_LOCK:
+            if char not in DIGIT_MOVES["v1"]:
+                return None
+            v1_steps = DIGIT_MOVES["v1"][char]
+            v2_steps = DIGIT_MOVES["v2"][char]
+        return {
+            "type": "note",
+            "v1": v1_steps,
+            "v2": v2_steps,
+            "v3": 0,
+            "v4": 0,
+            "enabled": (True, True, False, False),
+            "source": "digits",
+            "duration": 0.15,
+            "char": char,
+        }
 
     with STATE_LOCK:
         if char not in voice1_movements:
@@ -379,8 +434,33 @@ def get_character_action(char):
         v3_steps = voice3_movements[char]
         v4_steps = voice4_movements[char]
 
-    return {'type': 'note', 'v1': v1_steps, 'v2': v2_steps, 'v3': v3_steps, 'v4': v4_steps, 'duration': 0.15,
-            'char': char}
+    if char in (" ", "\n", "\t", "\b", "\x7f") and v1_steps == 0 and v2_steps == 0 and v3_steps == 0 and v4_steps == 0:
+        return {"type": "rest", "duration": 0.15, "char": "·", "v1": 0, "v2": 0, "v3": 0, "v4": 0}
+
+    if is_upper:
+        return {
+            "type": "note",
+            "v1": 0,
+            "v2": 0,
+            "v3": v3_steps,
+            "v4": v4_steps,
+            "enabled": (False, False, True, True),
+            "source": "letters",
+            "duration": 0.15,
+            "char": char,
+        }
+
+    return {
+        "type": "note",
+        "v1": v1_steps,
+        "v2": v2_steps,
+        "v3": v3_steps,
+        "v4": v4_steps,
+        "enabled": (True, True, True, True),
+        "source": "letters",
+        "duration": 0.15,
+        "char": char,
+    }
 
 
 def generate_tone(frequency, duration=0.15, volume=0.2):
@@ -418,13 +498,15 @@ def generate_tone(frequency, duration=0.15, volume=0.2):
     return wave.astype(np.float32)
 
 
-def generate_quad_tone(freq1, freq2, freq3, freq4, duration=0.15, volume=0.12):
+def generate_quad_tone(freq1, freq2, freq3, freq4, duration=0.15, volume=0.12, enabled=(True, True, True, True)):
     """Generate four-note harmony"""
     sample_rate = 44100
     samples = int(sample_rate * duration)
     t = np.linspace(0, duration, samples, False)
 
-    def make_wave(freq: float, timbre: str) -> np.ndarray:
+    def make_wave(freq: float, timbre: str, on: bool) -> np.ndarray:
+        if not on:
+            return np.zeros_like(t)
         phase = 2 * np.pi * freq * t
 
         if timbre == "Sine":
@@ -478,11 +560,13 @@ def generate_quad_tone(freq1, freq2, freq3, freq4, duration=0.15, volume=0.12):
 
         return np.sin(phase)
 
-    wave1 = make_wave(freq1, TIMBRES[0])
-    wave2 = make_wave(freq2, TIMBRES[1])
-    wave3 = make_wave(freq3, TIMBRES[2])
-    wave4 = make_wave(freq4, TIMBRES[3])
-    wave = (wave1 + wave2 + wave3 + wave4) / 4
+    wave1 = make_wave(freq1, TIMBRES[0], enabled[0])
+    wave2 = make_wave(freq2, TIMBRES[1], enabled[1])
+    wave3 = make_wave(freq3, TIMBRES[2], enabled[2])
+    wave4 = make_wave(freq4, TIMBRES[3], enabled[3])
+    active = int(enabled[0]) + int(enabled[1]) + int(enabled[2]) + int(enabled[3])
+    denom = active if active else 1
+    wave = (wave1 + wave2 + wave3 + wave4) / denom
 
     # ADSR envelope
     attack = min(0.02, duration * 0.1)
@@ -535,11 +619,29 @@ def audio_worker():
                     time.sleep(action['duration'])
                 elif action['type'] == 'note':
                     with STATE_LOCK:
-                        f1 = music_state.move_voice1(action['v1'], action['char'])
-                        f2 = music_state.move_voice2(action['v2'], action['char'])
-                        f3 = music_state.move_voice3(action['v3'], action['char'])
-                        f4 = music_state.move_voice4(action['v4'], action['char'])
-                        tone = generate_quad_tone(f1, f2, f3, f4, action['duration'])
+                        enabled = action.get("enabled", (True, True, True, True))
+                        source = action.get("source", "letters")
+                        v1_map = DIGIT_MOVES["v1"] if source == "digits" else voice1_movements
+                        v2_map = DIGIT_MOVES["v2"] if source == "digits" else voice2_movements
+                        v3_map = voice3_movements
+                        v4_map = voice4_movements
+                        if enabled[0]:
+                            f1 = music_state._move_voice("voice1_index", action["v1"], action["char"], v1_map)
+                        else:
+                            f1 = music_state.get_frequency(music_state.voice1_index)
+                        if enabled[1]:
+                            f2 = music_state._move_voice("voice2_index", action["v2"], action["char"], v2_map)
+                        else:
+                            f2 = music_state.get_frequency(music_state.voice2_index)
+                        if enabled[2]:
+                            f3 = music_state._move_voice("voice3_index", action["v3"], action["char"], v3_map)
+                        else:
+                            f3 = music_state.get_frequency(music_state.voice3_index)
+                        if enabled[3]:
+                            f4 = music_state._move_voice("voice4_index", action["v4"], action["char"], v4_map)
+                        else:
+                            f4 = music_state.get_frequency(music_state.voice4_index)
+                        tone = generate_quad_tone(f1, f2, f3, f4, action["duration"], enabled=enabled)
                     stream.write(tone.tobytes())
 
                 symbol = action['char']
@@ -577,13 +679,30 @@ def on_press(key):
     last_key_time = current_time
 
     try:
-        if hasattr(key, 'char') and key.char:
-            char = key.char.lower()
-            action = get_character_action(char)
+        if key == keyboard.Key.enter:
+            char_raw = "\n"
+            action = get_character_action(char_raw, is_upper=False, is_digit=False)
+        elif key == keyboard.Key.tab:
+            char_raw = "\t"
+            action = get_character_action(char_raw, is_upper=False, is_digit=False)
+        elif key == keyboard.Key.backspace:
+            char_raw = "\b"
+            action = get_character_action(char_raw, is_upper=False, is_digit=False)
+        elif key == keyboard.Key.delete:
+            char_raw = "\x7f"
+            action = get_character_action(char_raw, is_upper=False, is_digit=False)
+        elif hasattr(key, 'char') and key.char is not None:
+            char_raw = key.char
+            is_upper = char_raw.isalpha() and char_raw.isupper()
+            is_digit = char_raw.isdigit()
+            char = char_raw.lower() if char_raw.isalpha() else char_raw
+            action = get_character_action(char, is_upper=is_upper, is_digit=is_digit)
+        else:
+            action = None
 
-            if action:
-                # Queue the action instead of playing directly
-                audio_queue.put(action)
+        if action:
+            # Queue the action instead of playing directly
+            audio_queue.put(action)
 
     except AttributeError:
         pass
@@ -601,11 +720,119 @@ def on_release(key):
         return False
 
 
+def _csv_ints(values: list[int]) -> str:
+    return ",".join(str(v) for v in values)
+
+
+def _parse_csv_ints(s: str) -> list[int]:
+    return [int(x.strip()) for x in s.split(",") if x.strip() != ""]
+
+
+def save_config():
+    cfg = configparser.ConfigParser()
+
+    cfg["scale"] = {
+        "key_pitch_class": str(music_state.key_pitch_class),
+        "mode": str(music_state.mode_name),
+        "octaves": str(music_state.octaves),
+    }
+    cfg["voices"] = {
+        "voice1_index": str(music_state.voice1_index),
+        "voice2_index": str(music_state.voice2_index),
+        "voice3_index": str(music_state.voice3_index),
+        "voice4_index": str(music_state.voice4_index),
+    }
+    cfg["timbre"] = {f"voice{i+1}": str(TIMBRES[i]) for i in range(4)}
+
+    for group_name, group in GROUPS.items():
+        section = f"intervals:{group_name}"
+        cfg[section] = {
+            "v1": _csv_ints(group["v1"]),
+            "v2": _csv_ints(group["v2"]),
+            "v3": _csv_ints(group["v3"]),
+            "v4": _csv_ints(group["v4"]),
+        }
+
+    cfg["punctuation"] = {}
+    for voice_key in ["v1", "v2", "v3", "v4"]:
+        cfg["punctuation"][voice_key] = _csv_ints([PUNCT_MOVES[voice_key][sym] for _label, sym in PUNCT_SYMBOLS])
+
+    cfg["numbers"] = {}
+    for voice_key in ["v1", "v2"]:
+        cfg["numbers"][voice_key] = _csv_ints([DIGIT_MOVES[voice_key][str(x)] for x in range(10)])
+
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        cfg.write(f)
+
+
+def load_config():
+    cfg = configparser.ConfigParser(strict=False, delimiters=("=",))
+    cfg.read(CONFIG_PATH, encoding="utf-8")
+
+    with STATE_LOCK:
+        if "scale" in cfg:
+            music_state.set_key_pitch_class(int(cfg["scale"].get("key_pitch_class", str(music_state.key_pitch_class))))
+            music_state.set_mode(str(cfg["scale"].get("mode", music_state.mode_name)))
+            music_state.set_octaves(int(cfg["scale"].get("octaves", str(music_state.octaves))))
+
+        if "voices" in cfg:
+            indices = [
+                int(cfg["voices"].get("voice1_index", str(music_state.voice1_index))),
+                int(cfg["voices"].get("voice2_index", str(music_state.voice2_index))),
+                int(cfg["voices"].get("voice3_index", str(music_state.voice3_index))),
+                int(cfg["voices"].get("voice4_index", str(music_state.voice4_index))),
+            ]
+            music_state.set_voice_indices(indices)
+
+        if "timbre" in cfg:
+            for i in range(4):
+                TIMBRES[i] = str(cfg["timbre"].get(f"voice{i+1}", TIMBRES[i]))
+
+        for group_name, group in GROUPS.items():
+            section = f"intervals:{group_name}"
+            if section in cfg:
+                group["v1"] = _parse_csv_ints(cfg[section].get("v1", _csv_ints(group["v1"])))
+                group["v2"] = _parse_csv_ints(cfg[section].get("v2", _csv_ints(group["v2"])))
+                group["v3"] = _parse_csv_ints(cfg[section].get("v3", _csv_ints(group["v3"])))
+                group["v4"] = _parse_csv_ints(cfg[section].get("v4", _csv_ints(group["v4"])))
+
+        if "punctuation" in cfg:
+            if all(vk in cfg["punctuation"] for vk in ["v1", "v2", "v3", "v4"]):
+                for voice_key in ["v1", "v2", "v3", "v4"]:
+                    values = _parse_csv_ints(cfg["punctuation"][voice_key])
+                    for i, (_label, sym) in enumerate(PUNCT_SYMBOLS):
+                        PUNCT_MOVES[voice_key][sym] = values[i]
+            else:
+                for voice_key in ["v1", "v2", "v3", "v4"]:
+                    for _label, sym in PUNCT_SYMBOLS:
+                        k = f"{voice_key}:{repr(sym)}"
+                        if k in cfg["punctuation"]:
+                            PUNCT_MOVES[voice_key][sym] = int(cfg["punctuation"][k])
+
+        if "numbers" in cfg:
+            if all(vk in cfg["numbers"] for vk in ["v1", "v2"]):
+                for voice_key in ["v1", "v2"]:
+                    values = _parse_csv_ints(cfg["numbers"][voice_key])
+                    for i, d in enumerate([str(x) for x in range(10)]):
+                        DIGIT_MOVES[voice_key][d] = values[i]
+            else:
+                for voice_key in ["v1", "v2"]:
+                    for d in [str(x) for x in range(10)]:
+                        k = f"{voice_key}:{d}"
+                        if k in cfg["numbers"]:
+                            DIGIT_MOVES[voice_key][d] = int(cfg["numbers"][k])
+
+        init_letter_movements()
+        save_config()
+
+
 class MelotypeConfigWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("melotype config")
         self.setMinimumWidth(900)
+
+        self._build_menu()
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -618,6 +845,9 @@ class MelotypeConfigWindow(QMainWindow):
         tabs.addTab(self._build_intervals_tab(), "Intervals")
 
         footer = QHBoxLayout()
+        open_btn = QPushButton("Open project folder")
+        open_btn.clicked.connect(self._on_open_project_folder)
+        footer.addWidget(open_btn)
         footer.addStretch(1)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
@@ -625,13 +855,124 @@ class MelotypeConfigWindow(QMainWindow):
         root_layout.addLayout(footer)
 
         self._refresh_voice_note_dropdowns()
+        self.refresh_from_state()
+
+    def _build_menu(self):
+        file_menu = self.menuBar().addMenu("File")
+
+        save_action = QAction("Save config.ini", self)
+        save_action.triggered.connect(self._on_save_config)
+        file_menu.addAction(save_action)
+
+        load_action = QAction("Load config.ini", self)
+        load_action.triggered.connect(self._on_load_config)
+        file_menu.addAction(load_action)
+
+        file_menu.addSeparator()
+
+        open_folder_action = QAction("Open project folder", self)
+        open_folder_action.triggered.connect(self._on_open_project_folder)
+        file_menu.addAction(open_folder_action)
+
+        file_menu.addSeparator()
+
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        help_menu = self.menuBar().addMenu("Help")
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self._on_about)
+        help_menu.addAction(about_action)
+
+    def _on_save_config(self):
+        with STATE_LOCK:
+            save_config()
+
+    def _on_load_config(self):
+        load_config()
+        self.refresh_from_state()
+
+    def _on_open_project_folder(self):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(os.getcwd()))
+
+    def _on_about(self):
+        QMessageBox.about(
+            self,
+            "About melotype",
+            (
+                "Made by <a href='https://github.com/crawsome'>github.com/crawsome</a><br/>"
+                "See my main project, <b>Wyrm Warrior</b>: "
+                "<a href='https://gx.games/games/z0d76p/wyrm-warrior/'>gx.games</a>"
+            ),
+        )
+
+    def refresh_from_state(self):
+        with STATE_LOCK:
+            key_pc = music_state.key_pitch_class
+            mode_name = music_state.mode_name
+            octaves = music_state.octaves
+            timbres = TIMBRES[:]
+            group_snapshot = {
+                g: {
+                    "v1": GROUPS[g]["v1"][:],
+                    "v2": GROUPS[g]["v2"][:],
+                    "v3": GROUPS[g]["v3"][:],
+                    "v4": GROUPS[g]["v4"][:],
+                }
+                for g in GROUPS
+            }
+            punct_snapshot = {vk: dict(PUNCT_MOVES[vk]) for vk in ["v1", "v2", "v3", "v4"]}
+            digit_snapshot = {vk: dict(DIGIT_MOVES[vk]) for vk in ["v1", "v2"]}
+
+        self.key_combo.blockSignals(True)
+        for i in range(self.key_combo.count()):
+            if self.key_combo.itemData(i) == key_pc:
+                self.key_combo.setCurrentIndex(i)
+                break
+        self.key_combo.blockSignals(False)
+
+        self.tension_combo.blockSignals(True)
+        self.tension_combo.setCurrentText(mode_name)
+        self.tension_combo.blockSignals(False)
+
+        self.octave_combo.blockSignals(True)
+        self.octave_combo.setCurrentText(str(octaves))
+        self.octave_combo.blockSignals(False)
+
+        self._refresh_voice_note_dropdowns()
+
+        for i, cb in enumerate(self.timbre_combos):
+            cb.blockSignals(True)
+            cb.setCurrentText(timbres[i])
+            cb.blockSignals(False)
+
+        for (group_name, voice_key, pos), cb in self.interval_combos.items():
+            cb.blockSignals(True)
+            cb.setCurrentText(str(group_snapshot[group_name][voice_key][pos]))
+            cb.blockSignals(False)
+
+        for (voice_key, sym), cb in self.punct_combos.items():
+            cb.blockSignals(True)
+            cb.setCurrentText(str(punct_snapshot[voice_key][sym]))
+            cb.blockSignals(False)
+
+        for (voice_key, digit), cb in self.digit_combos.items():
+            cb.blockSignals(True)
+            cb.setCurrentText(str(digit_snapshot[voice_key][digit]))
+            cb.blockSignals(False)
 
     def _build_config_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
         scale_box = QGroupBox("Scale")
-        scale_layout = QGridLayout(scale_box)
+        scale_v = QVBoxLayout(scale_box)
+        scale_help = QLabel("Use this section to choose key, mode, octaves, and per-voice starting notes. Changes apply live.")
+        scale_help.setWordWrap(True)
+        scale_v.addWidget(scale_help)
+        scale_layout = QGridLayout()
+        scale_v.addLayout(scale_layout)
         layout.addWidget(scale_box)
 
         scale_layout.addWidget(QLabel("Key"), 0, 0)
@@ -670,7 +1011,12 @@ class MelotypeConfigWindow(QMainWindow):
             scale_layout.addWidget(combo, 3 + i, 1)
 
         tone_box = QGroupBox("Tone")
-        tone_layout = QGridLayout(tone_box)
+        tone_v = QVBoxLayout(tone_box)
+        tone_help = QLabel("Use this section to choose a timbre (waveform/preset) for each voice. Changes apply live.")
+        tone_help.setWordWrap(True)
+        tone_v.addWidget(tone_help)
+        tone_layout = QGridLayout()
+        tone_v.addLayout(tone_layout)
         layout.addWidget(tone_box)
 
         self.timbre_combos: list[QComboBox] = []
@@ -691,6 +1037,13 @@ class MelotypeConfigWindow(QMainWindow):
         tab = QWidget()
         outer = QVBoxLayout(tab)
 
+        top_help = QLabel(
+            "Use this page to customize how keys map to interval movements. "
+            "Common symbols should usually have smaller movements; rare symbols can have bigger jumps."
+        )
+        top_help.setWordWrap(True)
+        outer.addWidget(top_help)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         outer.addWidget(scroll)
@@ -699,15 +1052,20 @@ class MelotypeConfigWindow(QMainWindow):
         scroll.setWidget(contents)
         layout = QVBoxLayout(contents)
 
-        value_options = list(range(-8, 9))
-        value_options.remove(0)
+        interval_value_options = [v for v in range(-8, 9) if v != 0]
+        misc_value_options = list(range(-8, 9))
 
         self.interval_combos: dict[tuple[str, str, int], QComboBox] = {}
 
         for group_name, group in GROUPS.items():
             box = QGroupBox(group_name)
             layout.addWidget(box)
-            grid = QGridLayout(box)
+            box_v = QVBoxLayout(box)
+            box_help = QLabel("Use this section to set per-voice interval moves for this letter-frequency group.")
+            box_help.setWordWrap(True)
+            box_v.addWidget(box_help)
+            grid = QGridLayout()
+            box_v.addLayout(grid)
 
             grid.addWidget(QLabel(""), 0, 0)
             for col, letter in enumerate(group["letters"]):
@@ -717,7 +1075,7 @@ class MelotypeConfigWindow(QMainWindow):
                 grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
                 for col, _letter in enumerate(group["letters"]):
                     cb = QComboBox()
-                    for v in value_options:
+                    for v in interval_value_options:
                         cb.addItem(str(v), v)
                     current = group[voice_key][col]
                     cb.setCurrentText(str(current))
@@ -729,22 +1087,51 @@ class MelotypeConfigWindow(QMainWindow):
 
         punct_box = QGroupBox("Punctuation")
         layout.addWidget(punct_box)
-        punct_grid = QGridLayout(punct_box)
+        punct_v = QVBoxLayout(punct_box)
+        punct_help = QLabel("Use this section to set per-voice interval moves for punctuation and special keys (SPACE/ENTER/TAB/etc).")
+        punct_help.setWordWrap(True)
+        punct_v.addWidget(punct_help)
+        punct_grid = QGridLayout()
+        punct_v.addLayout(punct_grid)
         punct_grid.addWidget(QLabel(""), 0, 0)
-        punct_grid.addWidget(QLabel(","), 0, 1, alignment=Qt.AlignCenter)
-        punct_grid.addWidget(QLabel("."), 0, 2, alignment=Qt.AlignCenter)
+        for col, (label, _sym) in enumerate(PUNCT_SYMBOLS):
+            punct_grid.addWidget(QLabel(label), 0, col + 1, alignment=Qt.AlignCenter)
 
         self.punct_combos: dict[tuple[str, str], QComboBox] = {}
         for row, voice_key in enumerate(["v1", "v2", "v3", "v4"]):
             punct_grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
-            for col, ch in enumerate([",", "."]):
+            for col, (_label, ch) in enumerate(PUNCT_SYMBOLS):
                 cb = QComboBox()
-                for v in value_options:
+                for v in misc_value_options:
                     cb.addItem(str(v), v)
                 cb.setCurrentText(str(PUNCT_MOVES[voice_key][ch]))
                 cb.currentIndexChanged.connect(lambda _idx, vk=voice_key, c=ch: self._on_punct_changed(vk, c))
                 self.punct_combos[(voice_key, ch)] = cb
                 punct_grid.addWidget(cb, row + 1, col + 1)
+
+        digits_box = QGroupBox("Numbers (top 2 voices only)")
+        layout.addWidget(digits_box)
+        digits_v = QVBoxLayout(digits_box)
+        digits_help = QLabel("Use this section to set interval moves for digits 0–9. Numbers only drive voices 1–2.")
+        digits_help.setWordWrap(True)
+        digits_v.addWidget(digits_help)
+        digits_grid = QGridLayout()
+        digits_v.addLayout(digits_grid)
+        digits_grid.addWidget(QLabel(""), 0, 0)
+        for col, d in enumerate([str(x) for x in range(10)]):
+            digits_grid.addWidget(QLabel(d), 0, col + 1, alignment=Qt.AlignCenter)
+
+        self.digit_combos: dict[tuple[str, str], QComboBox] = {}
+        for row, voice_key in enumerate(["v1", "v2"]):
+            digits_grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
+            for col, d in enumerate([str(x) for x in range(10)]):
+                cb = QComboBox()
+                for v in misc_value_options:
+                    cb.addItem(str(v), v)
+                cb.setCurrentText(str(DIGIT_MOVES[voice_key][d]))
+                cb.currentIndexChanged.connect(lambda _idx, vk=voice_key, digit=d: self._on_digit_changed(vk, digit))
+                self.digit_combos[(voice_key, d)] = cb
+                digits_grid.addWidget(cb, row + 1, col + 1)
 
         layout.addStretch(1)
         return tab
@@ -818,6 +1205,12 @@ class MelotypeConfigWindow(QMainWindow):
             PUNCT_MOVES[voice_key][ch] = value
             init_letter_movements()
 
+    def _on_digit_changed(self, voice_key: str, digit: str):
+        cb = self.digit_combos[(voice_key, digit)]
+        value = int(cb.currentData())
+        with STATE_LOCK:
+            DIGIT_MOVES[voice_key][digit] = value
+
 
 def main():
     global running
@@ -838,6 +1231,8 @@ def main():
         n3 = music_state.get_note_name(music_state.voice3_index)
         n4 = music_state.get_note_name(music_state.voice4_index)
     print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
+
+    load_config()
 
     # Start audio thread
     audio_thread = threading.Thread(target=audio_worker, daemon=True)
