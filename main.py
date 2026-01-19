@@ -14,6 +14,12 @@ from pynput import keyboard
 # Letter frequencies (descending order)
 LETTER_FREQ = "etaoinshrdlcumfpgwybvkxjqz"
 
+# 7-note Dorian scale over 3 octaves: indices 0..21 (roots at 0, 7, 14, 21)
+SCALE_DEGREES = 7
+OCTAVES = 3
+MIN_SCALE_INDEX = 0
+MAX_SCALE_INDEX = OCTAVES * SCALE_DEGREES
+
 # Audio queue - thread-safe communication
 audio_queue = queue.Queue()
 running = True
@@ -23,11 +29,12 @@ class MusicState:
     """Maintains current musical state"""
 
     def __init__(self):
-        # 4 voices starting on different octaves, 4 octaves total range (0-27)
-        self.voice1_index = 7  # Low octave
-        self.voice2_index = 14  # Mid-low octave
-        self.voice3_index = 21  # Mid-high octave
-        self.voice4_index = 28  # High octave (will be clamped to 27)
+        # 4 voices, each starting on the root note in a different octave
+        # 3 octaves total range: indices 0..21 (roots at 0, 7, 14, 21)
+        self.voice1_index = 0
+        self.voice2_index = 7
+        self.voice3_index = 14
+        self.voice4_index = 21
         self.base_freq = 110.0  # A2
 
     def get_frequency(self, scale_index):
@@ -42,13 +49,19 @@ class MusicState:
         """Move voice 1"""
         new_index = self.voice1_index + steps
 
-        if new_index > 27:
+        if new_index > MAX_SCALE_INDEX:
             voice1_movements[char] = -voice1_movements[char]
-            overflow = new_index - 27
-            self.voice1_index = 27 - overflow
-        elif new_index < 0:
+            overflow = new_index - MAX_SCALE_INDEX
+            reflected = MAX_SCALE_INDEX - overflow
+            if reflected == self.voice1_index:
+                reflected -= 1
+            self.voice1_index = reflected
+        elif new_index < MIN_SCALE_INDEX:
             voice1_movements[char] = -voice1_movements[char]
-            self.voice1_index = -new_index
+            reflected = MIN_SCALE_INDEX + (MIN_SCALE_INDEX - new_index)
+            if reflected == self.voice1_index:
+                reflected += 1
+            self.voice1_index = reflected
         else:
             self.voice1_index = new_index
 
@@ -58,13 +71,19 @@ class MusicState:
         """Move voice 2"""
         new_index = self.voice2_index + steps
 
-        if new_index > 27:
+        if new_index > MAX_SCALE_INDEX:
             voice2_movements[char] = -voice2_movements[char]
-            overflow = new_index - 27
-            self.voice2_index = 27 - overflow
-        elif new_index < 0:
+            overflow = new_index - MAX_SCALE_INDEX
+            reflected = MAX_SCALE_INDEX - overflow
+            if reflected == self.voice2_index:
+                reflected -= 1
+            self.voice2_index = reflected
+        elif new_index < MIN_SCALE_INDEX:
             voice2_movements[char] = -voice2_movements[char]
-            self.voice2_index = -new_index
+            reflected = MIN_SCALE_INDEX + (MIN_SCALE_INDEX - new_index)
+            if reflected == self.voice2_index:
+                reflected += 1
+            self.voice2_index = reflected
         else:
             self.voice2_index = new_index
 
@@ -74,13 +93,19 @@ class MusicState:
         """Move voice 3"""
         new_index = self.voice3_index + steps
 
-        if new_index > 27:
+        if new_index > MAX_SCALE_INDEX:
             voice3_movements[char] = -voice3_movements[char]
-            overflow = new_index - 27
-            self.voice3_index = 27 - overflow
-        elif new_index < 0:
+            overflow = new_index - MAX_SCALE_INDEX
+            reflected = MAX_SCALE_INDEX - overflow
+            if reflected == self.voice3_index:
+                reflected -= 1
+            self.voice3_index = reflected
+        elif new_index < MIN_SCALE_INDEX:
             voice3_movements[char] = -voice3_movements[char]
-            self.voice3_index = -new_index
+            reflected = MIN_SCALE_INDEX + (MIN_SCALE_INDEX - new_index)
+            if reflected == self.voice3_index:
+                reflected += 1
+            self.voice3_index = reflected
         else:
             self.voice3_index = new_index
 
@@ -90,13 +115,19 @@ class MusicState:
         """Move voice 4"""
         new_index = self.voice4_index + steps
 
-        if new_index > 27:
+        if new_index > MAX_SCALE_INDEX:
             voice4_movements[char] = -voice4_movements[char]
-            overflow = new_index - 27
-            self.voice4_index = 27 - overflow
-        elif new_index < 0:
+            overflow = new_index - MAX_SCALE_INDEX
+            reflected = MAX_SCALE_INDEX - overflow
+            if reflected == self.voice4_index:
+                reflected -= 1
+            self.voice4_index = reflected
+        elif new_index < MIN_SCALE_INDEX:
             voice4_movements[char] = -voice4_movements[char]
-            self.voice4_index = -new_index
+            reflected = MIN_SCALE_INDEX + (MIN_SCALE_INDEX - new_index)
+            if reflected == self.voice4_index:
+                reflected += 1
+            self.voice4_index = reflected
         else:
             self.voice4_index = new_index
 
@@ -358,7 +389,7 @@ def main():
     print("=" * 60)
     print("\n4 voices, each starting in different octaves")
     print("Dorian mode (D Dorian: D E F G A B C)")
-    print("Range: 4 octaves")
+    print("Range: 3 octaves")
     print("\nPress ESC to exit")
     print("=" * 60)
     print()
