@@ -218,7 +218,7 @@ def get_character_action(char):
     """Map characters to musical actions"""
 
     if char == ' ':
-        return {'type': 'rest', 'duration': 0.15}
+        return {'type': 'rest', 'duration': 0.15, 'char': '·', 'v1': 0, 'v2': 0, 'v3': 0, 'v4': 0}
 
     if char not in voice1_movements:
         return None
@@ -337,6 +337,14 @@ def audio_worker():
                     tone = generate_quad_tone(f1, f2, f3, f4, action['duration'])
                     stream.write(tone.tobytes())
 
+                symbol = action['char']
+                n1 = music_state.get_note_name(music_state.voice1_index)
+                n2 = music_state.get_note_name(music_state.voice2_index)
+                n3 = music_state.get_note_name(music_state.voice3_index)
+                n4 = music_state.get_note_name(music_state.voice4_index)
+                print(f"{symbol}\t{action['v1']}\t{action['v2']}\t{action['v3']}\t{action['v4']}")
+                print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
+
             except queue.Empty:
                 continue
             except Exception as e:
@@ -371,13 +379,6 @@ def on_press(key):
                 # Queue the action instead of playing directly
                 audio_queue.put(action)
 
-                symbol = '·' if action['type'] == 'rest' else char
-                n1 = music_state.get_note_name(music_state.voice1_index)
-                n2 = music_state.get_note_name(music_state.voice2_index)
-                n3 = music_state.get_note_name(music_state.voice3_index)
-                n4 = music_state.get_note_name(music_state.voice4_index)
-                print(f"{symbol} -> V1:{n1} V2:{n2} V3:{n3} V4:{n4}")
-
     except AttributeError:
         pass
 
@@ -405,6 +406,12 @@ def main():
     print("\nPress ESC to exit")
     print("=" * 60)
     print()
+
+    n1 = music_state.get_note_name(music_state.voice1_index)
+    n2 = music_state.get_note_name(music_state.voice2_index)
+    n3 = music_state.get_note_name(music_state.voice3_index)
+    n4 = music_state.get_note_name(music_state.voice4_index)
+    print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
 
     # Start audio thread
     audio_thread = threading.Thread(target=audio_worker, daemon=True)
