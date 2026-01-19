@@ -39,11 +39,12 @@
   - `pyaudio`
   - `pynput`
   - `PySide6`
+  - `music21` (for chord naming)
 
 ## Install (PowerShell)
 
 ```powershell
-python -m pip install numpy pyaudio pynput PySide6
+python -m pip install numpy pyaudio pynput PySide6 music21
 ```
 
 If `pyaudio` fails to install on Windows, you typically need a working PortAudio/PyAudio wheel for your Python version.

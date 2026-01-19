@@ -11,9 +11,11 @@ import threading
 import time
 import configparser
 import os
+from typing import Optional
+from music21 import chord as m21chord
+from music21 import pitch as m21pitch
 from pynput import keyboard
-from PySide6.QtCore import Qt, QCoreApplication
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QCoreApplication, QObject, Signal, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,6 +28,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -149,6 +152,12 @@ class MusicState:
         note = NOTE_NAMES_SHARP[midi % 12]
         note_octave = (midi // 12) - 1
         return f"{note}{note_octave}"
+
+    def get_midi(self, scale_index: int) -> int:
+        octave = scale_index // self.scale_degrees
+        position = scale_index % self.scale_degrees
+        semitones = octave * 12 + self.mode_intervals[position]
+        return self.base_midi + semitones
 
     def set_key_pitch_class(self, pitch_class: int):
         self.key_pitch_class = pitch_class
@@ -679,6 +688,13 @@ def audio_worker():
 
                 if action['type'] == 'rest':
                     time.sleep(action['duration'])
+                    if PLAYBACK_BUS is not None:
+                        PLAYBACK_BUS.updated.emit(
+                            {
+                                "type": "rest",
+                                "symbol": action.get("char", "·"),
+                            }
+                        )
                 elif action['type'] == 'note':
                     with STATE_LOCK:
                         enabled = action.get("enabled", (True, True, True, True))
@@ -687,6 +703,18 @@ def audio_worker():
                         v2_map = DIGIT_MOVES["v2"] if source == "digits" else voice2_movements
                         v3_map = voice3_movements
                         v4_map = voice4_movements
+                        prev_notes = [
+                            music_state.get_note_name(music_state.voice1_index),
+                            music_state.get_note_name(music_state.voice2_index),
+                            music_state.get_note_name(music_state.voice3_index),
+                            music_state.get_note_name(music_state.voice4_index),
+                        ]
+                        prev_midis_all = [
+                            music_state.get_midi(music_state.voice1_index),
+                            music_state.get_midi(music_state.voice2_index),
+                            music_state.get_midi(music_state.voice3_index),
+                            music_state.get_midi(music_state.voice4_index),
+                        ]
                         if enabled[0]:
                             f1 = music_state._move_voice("voice1_index", action["v1"], action["char"], v1_map)
                         else:
@@ -712,8 +740,34 @@ def audio_worker():
                     n2 = music_state.get_note_name(music_state.voice2_index)
                     n3 = music_state.get_note_name(music_state.voice3_index)
                     n4 = music_state.get_note_name(music_state.voice4_index)
+                    enabled_list = list(action.get("enabled", (True, True, True, True)))
+                    cur_midis_all = [
+                        music_state.get_midi(music_state.voice1_index),
+                        music_state.get_midi(music_state.voice2_index),
+                        music_state.get_midi(music_state.voice3_index),
+                        music_state.get_midi(music_state.voice4_index),
+                    ]
+                    prev_midis = [m for on, m in zip(enabled_list, prev_midis_all) if on]
+                    cur_midis = [m for on, m in zip(enabled_list, cur_midis_all) if on]
+                    prev_chord_name = chord_name_from_midis(prev_midis) if prev_midis else "—"
+                    chord_name = chord_name_from_midis(cur_midis) if cur_midis else "—"
                 print(f"{symbol}\t{action['v1']}\t{action['v2']}\t{action['v3']}\t{action['v4']}")
                 print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
+                print(f"\tChord: {chord_name}")
+
+                if PLAYBACK_BUS is not None and action["type"] == "note":
+                    PLAYBACK_BUS.updated.emit(
+                        {
+                            "type": "note",
+                            "symbol": symbol,
+                            "steps": [action["v1"], action["v2"], action["v3"], action["v4"]],
+                            "prev_notes": prev_notes,
+                            "notes": [n1, n2, n3, n4],
+                            "enabled": enabled_list,
+                            "prev_chord": prev_chord_name,
+                            "chord": chord_name,
+                        }
+                    )
 
             except queue.Empty:
                 continue
@@ -800,6 +854,23 @@ def _csv_tokens(values: list[str]) -> str:
 def _parse_csv_tokens(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip() != ""]
 
+
+def chord_name_from_midis(midis: list[int]) -> str:
+    pitches = [m21pitch.Pitch(midi=m) for m in midis]
+    c = m21chord.Chord(pitches)
+    name = c.pitchedCommonName
+    root = c.root().name
+    bass = c.bass().name
+    if bass != root:
+        return f"{name}/{bass}"
+    return name
+
+
+class PlaybackBus(QObject):
+    updated = Signal(dict)
+
+
+PLAYBACK_BUS: Optional[PlaybackBus] = None
 def save_config():
     cfg = configparser.ConfigParser()
 
@@ -1408,8 +1479,86 @@ class MelotypeConfigWindow(QMainWindow):
         )
         grid.addWidget(self.basic_tension_combo, 2, 1)
 
+        now_box = QGroupBox("Now Playing")
+        layout.addWidget(now_box)
+        now_v = QVBoxLayout(now_box)
+        now_help = QLabel("This mirrors the console output, but uses fixed labels. It updates as you type.")
+        now_help.setWordWrap(True)
+        now_v.addWidget(now_help)
+
+        now_grid = QGridLayout()
+        now_v.addLayout(now_grid)
+
+        now_grid.addWidget(QLabel(""), 0, 0)
+        for i in range(4):
+            now_grid.addWidget(QLabel(f"V{i+1}"), 0, i + 1, alignment=Qt.AlignCenter)
+        now_grid.addWidget(QLabel("Chord"), 0, 6)
+
+        now_grid.addWidget(QLabel("Previous"), 1, 0)
+        self.prev_note_labels: list[QLabel] = []
+        for i in range(4):
+            lbl = QLabel("—")
+            lbl.setMinimumWidth(70)
+            lbl.setMaximumWidth(70)
+            self.prev_note_labels.append(lbl)
+            now_grid.addWidget(lbl, 1, i + 1, alignment=Qt.AlignCenter)
+
+        self.prev_chord_label = QLabel("—")
+        self.prev_chord_label.setWordWrap(True)
+        self.prev_chord_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        now_grid.addWidget(self.prev_chord_label, 1, 6)
+
+        now_grid.addWidget(QLabel("Key"), 2, 0)
+        self.key_used_label = QLabel("—")
+        now_grid.addWidget(self.key_used_label, 2, 1, 1, 4)
+
+        now_grid.addWidget(QLabel("Intervals"), 3, 0)
+        self.step_labels: list[QLabel] = []
+        for i in range(4):
+            lbl = QLabel("0")
+            lbl.setMinimumWidth(70)
+            lbl.setMaximumWidth(70)
+            self.step_labels.append(lbl)
+            now_grid.addWidget(lbl, 3, i + 1, alignment=Qt.AlignCenter)
+
+        now_grid.addWidget(QLabel("Current"), 4, 0)
+        self.note_labels: list[QLabel] = []
+        for i in range(4):
+            lbl = QLabel("—")
+            lbl.setMinimumWidth(70)
+            lbl.setMaximumWidth(70)
+            self.note_labels.append(lbl)
+            now_grid.addWidget(lbl, 4, i + 1, alignment=Qt.AlignCenter)
+
+        self.chord_label = QLabel("—")
+        self.chord_label.setWordWrap(True)
+        self.chord_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        now_grid.addWidget(self.chord_label, 4, 6)
+
+        now_grid.setColumnMinimumWidth(0, 80)
+        for c in [1, 2, 3, 4]:
+            now_grid.setColumnMinimumWidth(c, 70)
+        now_grid.setColumnMinimumWidth(6, 260)
+        now_grid.setColumnStretch(6, 1)
+
         layout.addStretch(1)
         return tab
+
+    def _on_playback_update(self, payload: dict):
+        if payload.get("type") == "rest":
+            self.key_used_label.setText("Rest")
+            return
+        self.key_used_label.setText(str(payload.get("symbol", "—")))
+        prev = payload.get("prev_notes", ["—"] * 4)
+        cur = payload.get("notes", ["—"] * 4)
+        steps = payload.get("steps", [0, 0, 0, 0])
+        enabled = payload.get("enabled", [True, True, True, True])
+        for i in range(4):
+            self.prev_note_labels[i].setText(prev[i] if enabled[i] else "Silent")
+            self.step_labels[i].setText(str(steps[i]))
+            self.note_labels[i].setText(cur[i] if enabled[i] else "Silent")
+        self.prev_chord_label.setText(str(payload.get("prev_chord", "—")))
+        self.chord_label.setText(str(payload.get("chord", "—")))
 
     def _on_interval_changed(self, group_name: str, voice_key: str, pos: int):
         cb = self.interval_combos[(group_name, voice_key, pos)]
@@ -1477,7 +1626,10 @@ def main():
     time.sleep(0.2)
 
     app = QApplication([])
+    global PLAYBACK_BUS
+    PLAYBACK_BUS = PlaybackBus()
     window = MelotypeConfigWindow()
+    PLAYBACK_BUS.updated.connect(window._on_playback_update)
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
 
     try:

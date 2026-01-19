@@ -2,3 +2,5 @@ numpy==2.0.2
 PyAudio==0.2.14
 pynput==1.8.1
 
+
+
