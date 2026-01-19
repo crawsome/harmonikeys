@@ -59,7 +59,7 @@ If `pyaudio` fails to install on Windows, you typically need a working PortAudio
 python .\main.py
 ```
 
-Press keys while the app is running (global listener). Press **ESC** to quit.
+Press keys while the app is running (global listener). Close the window to quit.
 
 ## Controls
 
@@ -67,7 +67,7 @@ Press keys while the app is running (global listener). Press **ESC** to quit.
 - **Capital letters** (`A-Z`): **voices 1–2 only**.
 - **Digits** (`0-9`): **voices 3–4 only**.
 - **SPACE/ENTER/TAB/BACKSPACE/DELETE**: configurable (default = rest if all 4 voice values are 0).
-- **ESC**: exit.
+- Close the window to exit.
 
 ## GUI
 
@@ -100,6 +100,7 @@ Press keys while the app is running (global listener). Press **ESC** to quit.
 - Punctuation is stored as `v1..v4` CSV lists aligned to the current punctuation column order shown in the UI.
 - Numbers are stored as `v1..v2` CSV lists aligned to digits `0..9`.
 - Any **Silent** entries are saved as the token `S` in these CSV lists.
+- Capitals (A–Z for voices 1–2) are also saved explicitly under `[capitals]` as `v1` and `v2` CSV lists (token `S` supported).
 - Older `config.ini` formats are auto-migrated on load and then rewritten to the new format.
 
 ## Console output (matrix)

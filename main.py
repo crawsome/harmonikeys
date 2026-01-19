@@ -63,6 +63,7 @@ audio_queue = queue.Queue()
 running = True
 STATE_LOCK = threading.RLock()
 CONFIG_PATH = "config.ini"
+MAIN_WINDOW = None
 
 MODE_STEP_PATTERNS = [
     ("Major", [0, 2, 2, 1, 2, 2, 2, 1]),
@@ -121,6 +122,7 @@ class MusicState:
         self.voice2_index = 7
         self.voice3_index = 14
         self.voice4_index = 21
+        self.start_voice_indices = [self.voice1_index, self.voice2_index, self.voice3_index, self.voice4_index]
 
         self.octaves = 3
         self.min_scale_index = 0
@@ -187,6 +189,10 @@ class MusicState:
 
     def set_voice_indices(self, indices: list[int]):
         self.voice1_index, self.voice2_index, self.voice3_index, self.voice4_index = indices
+        self.start_voice_indices = indices[:]
+
+    def reset_to_start(self):
+        self.voice1_index, self.voice2_index, self.voice3_index, self.voice4_index = self.start_voice_indices
 
     def _move_voice(self, attr_name: str, steps: int, char: str, movement_map: dict[str, int]) -> float:
         current = getattr(self, attr_name)
@@ -474,12 +480,12 @@ def get_character_action(char: str, is_upper: bool, is_digit: bool):
         }
 
     with STATE_LOCK:
-        if char not in voice1_movements:
-            return None
-        v1_steps = voice1_movements[char]
-        v2_steps = voice2_movements[char]
-        v3_steps = voice3_movements[char]
-        v4_steps = voice4_movements[char]
+    if char not in voice1_movements:
+        return None
+    v1_steps = voice1_movements[char]
+    v2_steps = voice2_movements[char]
+    v3_steps = voice3_movements[char]
+    v4_steps = voice4_movements[char]
 
         v1_on = True
         v2_on = True
@@ -699,13 +705,14 @@ def audio_worker():
                             }
                         )
                 elif action['type'] == 'note':
+                    enabled = action.get("enabled", (True, True, True, True))
+                    source = action.get("source", "letters")
+                    v1_map = voice1_movements
+                    v2_map = voice2_movements
+                    v3_map = DIGIT_MOVES["v3"] if source == "digits" else voice3_movements
+                    v4_map = DIGIT_MOVES["v4"] if source == "digits" else voice4_movements
+
                     with STATE_LOCK:
-                        enabled = action.get("enabled", (True, True, True, True))
-                        source = action.get("source", "letters")
-                        v1_map = voice1_movements
-                        v2_map = voice2_movements
-                        v3_map = DIGIT_MOVES["v3"] if source == "digits" else voice3_movements
-                        v4_map = DIGIT_MOVES["v4"] if source == "digits" else voice4_movements
                         prev_notes = [
                             music_state.get_note_name(music_state.voice1_index),
                             music_state.get_note_name(music_state.voice2_index),
@@ -718,6 +725,7 @@ def audio_worker():
                             music_state.get_midi(music_state.voice3_index),
                             music_state.get_midi(music_state.voice4_index),
                         ]
+
                         if enabled[0]:
                             f1 = music_state._move_voice("voice1_index", action["v1"], action["char"], v1_map)
                         else:
@@ -734,26 +742,29 @@ def audio_worker():
                             f4 = music_state._move_voice("voice4_index", action["v4"], action["char"], v4_map)
                         else:
                             f4 = music_state.get_frequency(music_state.voice4_index)
-                        tone = generate_quad_tone(f1, f2, f3, f4, action["duration"], enabled=enabled)
-                    stream.write(tone.tobytes())
 
-                symbol = action['char']
-                with STATE_LOCK:
-                    n1 = music_state.get_note_name(music_state.voice1_index)
-                    n2 = music_state.get_note_name(music_state.voice2_index)
-                    n3 = music_state.get_note_name(music_state.voice3_index)
-                    n4 = music_state.get_note_name(music_state.voice4_index)
-                    enabled_list = list(action.get("enabled", (True, True, True, True)))
-                    cur_midis_all = [
-                        music_state.get_midi(music_state.voice1_index),
-                        music_state.get_midi(music_state.voice2_index),
-                        music_state.get_midi(music_state.voice3_index),
-                        music_state.get_midi(music_state.voice4_index),
-                    ]
+                n1 = music_state.get_note_name(music_state.voice1_index)
+                n2 = music_state.get_note_name(music_state.voice2_index)
+                n3 = music_state.get_note_name(music_state.voice3_index)
+                n4 = music_state.get_note_name(music_state.voice4_index)
+                        enabled_list = list(enabled)
+                        cur_midis_all = [
+                            music_state.get_midi(music_state.voice1_index),
+                            music_state.get_midi(music_state.voice2_index),
+                            music_state.get_midi(music_state.voice3_index),
+                            music_state.get_midi(music_state.voice4_index),
+                        ]
+
+                    # Expensive chord naming is outside the lock (keeps UI responsive)
                     prev_midis = [m for on, m in zip(enabled_list, prev_midis_all) if on]
                     cur_midis = [m for on, m in zip(enabled_list, cur_midis_all) if on]
                     prev_chord_name = chord_name_from_midis(prev_midis) if prev_midis else "—"
                     chord_name = chord_name_from_midis(cur_midis) if cur_midis else "—"
+
+                    tone = generate_quad_tone(f1, f2, f3, f4, action["duration"], enabled=enabled)
+                    stream.write(tone.tobytes())
+
+                symbol = action['char']
                 print(f"{symbol}\t{action['v1']}\t{action['v2']}\t{action['v3']}\t{action['v4']}")
                 print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
                 print(f"\tChord: {chord_name}")
@@ -825,9 +836,9 @@ def on_press(key):
         else:
             action = None
 
-        if action:
-            # Queue the action instead of playing directly
-            audio_queue.put(action)
+            if action:
+                # Queue the action instead of playing directly
+                audio_queue.put(action)
 
     except AttributeError:
         pass
@@ -841,13 +852,6 @@ def on_release(key):
     if key in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r):
         shift_down = False
         return
-
-    if key == keyboard.Key.esc:
-        print("\nShutting down...")
-        running = False
-        audio_queue.put(None)  # Signal audio thread to stop
-        QCoreApplication.quit()
-        return False
 
 
 def _csv_ints(values: list[int]) -> str:
@@ -904,10 +908,10 @@ def save_config():
         "octaves": str(music_state.octaves),
     }
     cfg["voices"] = {
-        "voice1_index": str(music_state.voice1_index),
-        "voice2_index": str(music_state.voice2_index),
-        "voice3_index": str(music_state.voice3_index),
-        "voice4_index": str(music_state.voice4_index),
+        "voice1_index": str(music_state.start_voice_indices[0]),
+        "voice2_index": str(music_state.start_voice_indices[1]),
+        "voice3_index": str(music_state.start_voice_indices[2]),
+        "voice4_index": str(music_state.start_voice_indices[3]),
     }
     cfg["timbre"] = {f"voice{i+1}": str(TIMBRES[i]) for i in range(4)}
 
@@ -919,6 +923,29 @@ def save_config():
             "v3": _csv_tokens([SILENT_TOKEN if LETTER_SILENT[group_name]["v3"][i] else str(group["v3"][i]) for i in range(len(group["letters"]))]),
             "v4": _csv_tokens([SILENT_TOKEN if LETTER_SILENT[group_name]["v4"][i] else str(group["v4"][i]) for i in range(len(group["letters"]))]),
         }
+
+    cfg["capitals"] = {
+        "v1": _csv_tokens(
+            [
+                (
+                    SILENT_TOKEN
+                    if LETTER_SILENT[letter_group_pos(ch)[0]]["v1"][letter_group_pos(ch)[1]]
+                    else str(GROUPS[letter_group_pos(ch)[0]]["v1"][letter_group_pos(ch)[1]])
+                )
+                for ch in string.ascii_lowercase
+            ]
+        ),
+        "v2": _csv_tokens(
+            [
+                (
+                    SILENT_TOKEN
+                    if LETTER_SILENT[letter_group_pos(ch)[0]]["v2"][letter_group_pos(ch)[1]]
+                    else str(GROUPS[letter_group_pos(ch)[0]]["v2"][letter_group_pos(ch)[1]])
+                )
+                for ch in string.ascii_lowercase
+            ]
+        ),
+    }
 
     cfg["punctuation"] = {}
     for voice_key in ["v1", "v2", "v3", "v4"]:
@@ -975,6 +1002,20 @@ def load_config():
                         else:
                             group[voice_key][i] = int(tok)
                             LETTER_SILENT[group_name][voice_key][i] = 0
+
+        if "capitals" in cfg and all(k in cfg["capitals"] for k in ["v1", "v2"]):
+            for voice_key in ["v1", "v2"]:
+                tokens = _parse_csv_tokens(cfg["capitals"][voice_key])
+                for i, upper in enumerate(string.ascii_uppercase):
+                    letter = upper.lower()
+                    group_name, pos = letter_group_pos(letter)
+                    tok = tokens[i]
+                    if tok == SILENT_TOKEN:
+                        GROUPS[group_name][voice_key][pos] = 0
+                        LETTER_SILENT[group_name][voice_key][pos] = 1
+                    else:
+                        GROUPS[group_name][voice_key][pos] = int(tok)
+                        LETTER_SILENT[group_name][voice_key][pos] = 0
 
         if "punctuation" in cfg:
             if all(vk in cfg["punctuation"] for vk in ["v1", "v2", "v3", "v4"]):
@@ -1692,9 +1733,40 @@ class MelotypeConfigWindow(QMainWindow):
         self._play_text = self.test_typing.toPlainText() or self.test_typing.placeholderText()
         self._play_idx = 0
         self.play_text_btn.setEnabled(False)
+        with STATE_LOCK:
+            music_state.reset_to_start()
+            cur_notes = [
+                music_state.get_note_name(music_state.voice1_index),
+                music_state.get_note_name(music_state.voice2_index),
+                music_state.get_note_name(music_state.voice3_index),
+                music_state.get_note_name(music_state.voice4_index),
+            ]
+            cur_midis = [
+                music_state.get_midi(music_state.voice1_index),
+                music_state.get_midi(music_state.voice2_index),
+                music_state.get_midi(music_state.voice3_index),
+                music_state.get_midi(music_state.voice4_index),
+            ]
+            cur_chord = chord_name_from_midis(cur_midis)
+
+        self.key_used_label.setText("—")
+        for i in range(4):
+            self.prev_note_labels[i].setText("—")
+            self.step_labels[i].setText("0")
+            self.note_labels[i].setText(cur_notes[i])
+        self.prev_chord_label.setText("—")
+        self.chord_label.setText(cur_chord)
         self._play_timer.start()
 
     def _play_next_char(self):
+        if self._play_idx >= len(self._play_text):
+            self._play_timer.stop()
+            self.play_text_btn.setEnabled(True)
+            return
+
+        # If spaces are NOT rests, skip them entirely (no pause).
+        while self._play_idx < len(self._play_text) and self._play_text[self._play_idx] == " " and not self.use_space_rests_cb.isChecked():
+            self._play_idx += 1
         if self._play_idx >= len(self._play_text):
             self._play_timer.stop()
             self.play_text_btn.setEnabled(True)
@@ -1765,15 +1837,15 @@ def main():
     print("\n4 voices, each starting in different octaves")
     print("Mode + key are configurable in the GUI")
     print("Range: configurable octaves")
-    print("\nPress ESC to exit")
+    print("\nClose the window to exit")
     print("=" * 60)
     print()
 
     with STATE_LOCK:
-        n1 = music_state.get_note_name(music_state.voice1_index)
-        n2 = music_state.get_note_name(music_state.voice2_index)
-        n3 = music_state.get_note_name(music_state.voice3_index)
-        n4 = music_state.get_note_name(music_state.voice4_index)
+    n1 = music_state.get_note_name(music_state.voice1_index)
+    n2 = music_state.get_note_name(music_state.voice2_index)
+    n3 = music_state.get_note_name(music_state.voice3_index)
+    n4 = music_state.get_note_name(music_state.voice4_index)
     print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
 
     load_config()
@@ -1789,6 +1861,8 @@ def main():
     global PLAYBACK_BUS
     PLAYBACK_BUS = PlaybackBus()
     window = MelotypeConfigWindow()
+    global MAIN_WINDOW
+    MAIN_WINDOW = window
     PLAYBACK_BUS.updated.connect(window._on_playback_update)
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
 
