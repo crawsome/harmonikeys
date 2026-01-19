@@ -23,7 +23,8 @@ class MusicState:
     """Maintains current musical state"""
 
     def __init__(self):
-        self.current_note_index = 7  # Start in middle of range
+        self.melody_note_index = 7  # Start in middle of range
+        self.harmony_note_index = 7  # Start at same position
         self.base_freq = 110.0  # A2
 
     def get_frequency(self, scale_index):
@@ -34,15 +35,87 @@ class MusicState:
         semitones = octave * 12 + [0, 3, 5, 7, 10][position]
         return self.base_freq * (2 ** (semitones / 12))
 
-    def move_relative(self, steps):
-        """Move by steps in the pentatonic scale"""
-        # Limit to 15 notes = exactly 3 octaves of pentatonic (5 notes per octave)
-        self.current_note_index = max(0, min(14, self.current_note_index + steps))
-        return self.get_frequency(self.current_note_index)
+    def move_melody(self, steps, char):
+        """Move melody by steps, invert letter at boundaries"""
+        new_index = self.melody_note_index + steps
+
+        # Hit boundary? Invert and bounce back
+        if new_index > 14:
+            melody_movements[char] = -melody_movements[char]
+            self.melody_note_index = 14 - (new_index - 14)
+            self.melody_note_index = max(0, self.melody_note_index)
+        elif new_index < 0:
+            melody_movements[char] = -melody_movements[char]
+            self.melody_note_index = abs(new_index)
+            self.melody_note_index = min(14, self.melody_note_index)
+        else:
+            self.melody_note_index = new_index
+
+        return self.get_frequency(self.melody_note_index)
+
+    def move_harmony(self, steps, char):
+        """Move harmony with its own rules"""
+        new_index = self.harmony_note_index + steps
+
+        # Hit boundary? Invert and bounce back
+        if new_index > 14:
+            harmony_movements[char] = -harmony_movements[char]
+            self.harmony_note_index = 14 - (new_index - 14)
+            self.harmony_note_index = max(0, self.harmony_note_index)
+        elif new_index < 0:
+            harmony_movements[char] = -harmony_movements[char]
+            self.harmony_note_index = abs(new_index)
+            self.harmony_note_index = min(14, self.harmony_note_index)
+        else:
+            self.harmony_note_index = new_index
+
+        return self.get_frequency(self.harmony_note_index)
 
 
 # Global music state
 music_state = MusicState()
+
+# Letter movement mappings - SEPARATE for melody and harmony
+melody_movements = {}
+harmony_movements = {}
+
+
+def init_letter_movements():
+    """Initialize letter movement mappings"""
+    for idx, char in enumerate(LETTER_FREQ):
+        # Top 8 letters: small movements (NO ZEROS)
+        if idx < 8:
+            melody_moves = [1, 1, -1, 2, -2, -1, 1, -1]
+            harmony_moves = [-1, -1, 1, -2, 2, 1, -1, 1]  # Opposite tendencies
+            melody_movements[char] = melody_moves[idx]
+            harmony_movements[char] = harmony_moves[idx]
+        # Next 8: medium movements
+        elif idx < 16:
+            melody_moves = [2, -2, 1, -1, 2, 1, -2, -3]
+            harmony_moves = [-2, 2, -1, 1, -2, -1, 2, 3]  # Opposite tendencies
+            melody_movements[char] = melody_moves[idx - 8]
+            harmony_movements[char] = harmony_moves[idx - 8]
+        # Next 6: larger jumps
+        elif idx < 22:
+            melody_moves = [3, -3, 2, -2, 3, -3]
+            harmony_moves = [-3, 3, -2, 2, -3, 3]  # Opposite tendencies
+            melody_movements[char] = melody_moves[idx - 16]
+            harmony_movements[char] = harmony_moves[idx - 16]
+        # Rarest 4: dramatic leaps
+        else:
+            melody_moves = [5, -5, 4, -4]
+            harmony_moves = [-5, 5, -4, 4]  # Opposite tendencies
+            melody_movements[char] = melody_moves[idx - 22]
+            harmony_movements[char] = harmony_moves[idx - 22]
+
+    melody_movements[','] = -1
+    melody_movements['.'] = -2
+    harmony_movements[','] = 1
+    harmony_movements['.'] = 2
+
+
+# Initialize on load
+init_letter_movements()
 
 
 def get_character_action(char):
@@ -50,36 +123,15 @@ def get_character_action(char):
 
     if char == ' ':
         return {'type': 'rest', 'duration': 0.15}
-    elif char == ',':
-        return {'type': 'note', 'steps': -1, 'duration': 0.1}
-    elif char == '.':
-        return {'type': 'note', 'steps': -2, 'duration': 0.4}
 
-    if char not in LETTER_FREQ:
+    if char not in melody_movements:
         return None
 
-    idx = LETTER_FREQ.index(char)
+    melody_steps = melody_movements[char]
+    harmony_steps = harmony_movements[char]
 
-    # Top 8 letters: small movements, medium duration
-    if idx < 8:
-        movements = [0, 1, -1, 1, 0, -1, 1, -1]
-        return {'type': 'note', 'steps': movements[idx], 'duration': 0.15}
-
-    # Next 8: medium movements, varied duration
-    elif idx < 16:
-        movements = [2, -2, 1, -1, 2, 1, -2, 0]
-        durations = [0.12, 0.18, 0.12, 0.15, 0.1, 0.15, 0.2, 0.25]
-        return {'type': 'note', 'steps': movements[idx - 8], 'duration': durations[idx - 8]}
-
-    # Next 6: larger jumps
-    elif idx < 22:
-        movements = [3, -3, 2, -2, 3, -3]
-        return {'type': 'note', 'steps': movements[idx - 16], 'duration': 0.12}
-
-    # Rarest 4: dramatic leaps
-    else:
-        movements = [5, -5, 4, -4]
-        return {'type': 'note', 'steps': movements[idx - 22], 'duration': 0.1}
+    return {'type': 'note', 'melody_steps': melody_steps, 'harmony_steps': harmony_steps, 'duration': 0.15,
+            'char': char}
 
 
 def generate_tone(frequency, duration=0.15, volume=0.2):
@@ -92,6 +144,41 @@ def generate_tone(frequency, duration=0.15, volume=0.2):
     wave = np.sin(2 * np.pi * frequency * t)
     wave += 0.3 * np.sin(4 * np.pi * frequency * t)
     wave += 0.15 * np.sin(6 * np.pi * frequency * t)
+
+    # ADSR envelope
+    attack = min(0.02, duration * 0.1)
+    decay = min(0.05, duration * 0.2)
+    sustain_level = 0.6
+
+    envelope = np.ones_like(t)
+    attack_samples = int(attack * sample_rate)
+    decay_samples = int(decay * sample_rate)
+
+    if attack_samples > 0:
+        envelope[:attack_samples] = np.linspace(0, 1, attack_samples)
+    if decay_samples > 0 and attack_samples + decay_samples < len(envelope):
+        envelope[attack_samples:attack_samples + decay_samples] = np.linspace(1, sustain_level, decay_samples)
+        envelope[attack_samples + decay_samples:] = sustain_level
+
+    # Release
+    release_samples = int(0.05 * sample_rate)
+    if release_samples < len(envelope):
+        envelope[-release_samples:] *= np.linspace(1, 0, release_samples)
+
+    wave = wave * envelope * volume
+    return wave.astype(np.float32)
+
+
+def generate_dual_tone(freq1, freq2, duration=0.15, volume=0.15):
+    """Generate two-note harmony"""
+    sample_rate = 44100
+    samples = int(sample_rate * duration)
+    t = np.linspace(0, duration, samples, False)
+
+    # Two sine waves with harmonics
+    wave1 = np.sin(2 * np.pi * freq1 * t) + 0.3 * np.sin(4 * np.pi * freq1 * t)
+    wave2 = np.sin(2 * np.pi * freq2 * t) + 0.3 * np.sin(4 * np.pi * freq2 * t)
+    wave = (wave1 + wave2) / 2
 
     # ADSR envelope
     attack = min(0.02, duration * 0.1)
@@ -143,8 +230,9 @@ def audio_worker():
                 if action['type'] == 'rest':
                     time.sleep(action['duration'])
                 elif action['type'] == 'note':
-                    freq = music_state.move_relative(action['steps'])
-                    tone = generate_tone(freq, action['duration'])
+                    freq_melody = music_state.move_melody(action['melody_steps'], action['char'])
+                    freq_harmony = music_state.move_harmony(action['harmony_steps'], action['char'])
+                    tone = generate_dual_tone(freq_melody, freq_harmony, action['duration'])
                     stream.write(tone.tobytes())
 
             except queue.Empty:
@@ -182,8 +270,9 @@ def on_press(key):
                 audio_queue.put(action)
 
                 symbol = '·' if action['type'] == 'rest' else char
-                freq = music_state.get_frequency(music_state.current_note_index)
-                print(f"{symbol} -> {freq:.1f}Hz (pos:{music_state.current_note_index})")
+                freq_m = music_state.get_frequency(music_state.melody_note_index)
+                freq_h = music_state.get_frequency(music_state.harmony_note_index)
+                print(f"{symbol} -> M:{freq_m:.1f}Hz H:{freq_h:.1f}Hz")
 
     except AttributeError:
         pass
