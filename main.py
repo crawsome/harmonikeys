@@ -23,95 +23,148 @@ class MusicState:
     """Maintains current musical state"""
 
     def __init__(self):
-        self.melody_note_index = 7  # Start in middle of range
-        self.harmony_note_index = 7  # Start at same position
+        # 4 voices starting on different octaves, 4 octaves total range (0-27)
+        self.voice1_index = 7  # Low octave
+        self.voice2_index = 14  # Mid-low octave
+        self.voice3_index = 21  # Mid-high octave
+        self.voice4_index = 28  # High octave (will be clamped to 27)
         self.base_freq = 110.0  # A2
 
     def get_frequency(self, scale_index):
-        """Convert scale index to frequency"""
-        # Map index to pentatonic note (A C D E G pattern)
-        octave = scale_index // 5
-        position = scale_index % 5
-        semitones = octave * 12 + [0, 3, 5, 7, 10][position]
+        """Convert scale index to frequency using Dorian mode"""
+        # Dorian mode intervals: 0, 2, 3, 5, 7, 9, 10 (W-H-W-W-W-H-W)
+        octave = scale_index // 7
+        position = scale_index % 7
+        semitones = octave * 12 + [0, 2, 3, 5, 7, 9, 10][position]
         return self.base_freq * (2 ** (semitones / 12))
 
-    def move_melody(self, steps, char):
-        """Move melody by steps, invert letter at boundaries"""
-        new_index = self.melody_note_index + steps
+    def move_voice1(self, steps, char):
+        """Move voice 1"""
+        new_index = self.voice1_index + steps
 
-        # Hit boundary? Invert and bounce back
-        if new_index > 14:
-            melody_movements[char] = -melody_movements[char]
-            self.melody_note_index = 14 - (new_index - 14)
-            self.melody_note_index = max(0, self.melody_note_index)
+        if new_index > 27:
+            voice1_movements[char] = -voice1_movements[char]
+            overflow = new_index - 27
+            self.voice1_index = 27 - overflow
         elif new_index < 0:
-            melody_movements[char] = -melody_movements[char]
-            self.melody_note_index = abs(new_index)
-            self.melody_note_index = min(14, self.melody_note_index)
+            voice1_movements[char] = -voice1_movements[char]
+            self.voice1_index = -new_index
         else:
-            self.melody_note_index = new_index
+            self.voice1_index = new_index
 
-        return self.get_frequency(self.melody_note_index)
+        return self.get_frequency(self.voice1_index)
 
-    def move_harmony(self, steps, char):
-        """Move harmony with its own rules"""
-        new_index = self.harmony_note_index + steps
+    def move_voice2(self, steps, char):
+        """Move voice 2"""
+        new_index = self.voice2_index + steps
 
-        # Hit boundary? Invert and bounce back
-        if new_index > 14:
-            harmony_movements[char] = -harmony_movements[char]
-            self.harmony_note_index = 14 - (new_index - 14)
-            self.harmony_note_index = max(0, self.harmony_note_index)
+        if new_index > 27:
+            voice2_movements[char] = -voice2_movements[char]
+            overflow = new_index - 27
+            self.voice2_index = 27 - overflow
         elif new_index < 0:
-            harmony_movements[char] = -harmony_movements[char]
-            self.harmony_note_index = abs(new_index)
-            self.harmony_note_index = min(14, self.harmony_note_index)
+            voice2_movements[char] = -voice2_movements[char]
+            self.voice2_index = -new_index
         else:
-            self.harmony_note_index = new_index
+            self.voice2_index = new_index
 
-        return self.get_frequency(self.harmony_note_index)
+        return self.get_frequency(self.voice2_index)
+
+    def move_voice3(self, steps, char):
+        """Move voice 3"""
+        new_index = self.voice3_index + steps
+
+        if new_index > 27:
+            voice3_movements[char] = -voice3_movements[char]
+            overflow = new_index - 27
+            self.voice3_index = 27 - overflow
+        elif new_index < 0:
+            voice3_movements[char] = -voice3_movements[char]
+            self.voice3_index = -new_index
+        else:
+            self.voice3_index = new_index
+
+        return self.get_frequency(self.voice3_index)
+
+    def move_voice4(self, steps, char):
+        """Move voice 4"""
+        new_index = self.voice4_index + steps
+
+        if new_index > 27:
+            voice4_movements[char] = -voice4_movements[char]
+            overflow = new_index - 27
+            self.voice4_index = 27 - overflow
+        elif new_index < 0:
+            voice4_movements[char] = -voice4_movements[char]
+            self.voice4_index = -new_index
+        else:
+            self.voice4_index = new_index
+
+        return self.get_frequency(self.voice4_index)
 
 
 # Global music state
 music_state = MusicState()
 
-# Letter movement mappings - SEPARATE for melody and harmony
-melody_movements = {}
-harmony_movements = {}
+# Letter movement mappings - SEPARATE for each voice
+voice1_movements = {}
+voice2_movements = {}
+voice3_movements = {}
+voice4_movements = {}
 
 
 def init_letter_movements():
-    """Initialize letter movement mappings"""
+    """Initialize letter movement mappings for 4 voices"""
     for idx, char in enumerate(LETTER_FREQ):
-        # Top 8 letters: small movements (NO ZEROS)
+        # Top 8 letters: small movements
         if idx < 8:
-            melody_moves = [1, 1, -1, 2, -2, -1, 1, -1]
-            harmony_moves = [-1, -1, 1, -2, 2, 1, -1, 1]  # Opposite tendencies
-            melody_movements[char] = melody_moves[idx]
-            harmony_movements[char] = harmony_moves[idx]
+            v1_moves = [1, 1, -1, 2, -2, -1, 1, -1]
+            v2_moves = [-1, -1, 1, -2, 2, 1, -1, 1]
+            v3_moves = [1, -1, 2, -1, 1, -2, 1, -1]
+            v4_moves = [-1, 1, -2, 1, -1, 2, -1, 1]
+            voice1_movements[char] = v1_moves[idx]
+            voice2_movements[char] = v2_moves[idx]
+            voice3_movements[char] = v3_moves[idx]
+            voice4_movements[char] = v4_moves[idx]
         # Next 8: medium movements
         elif idx < 16:
-            melody_moves = [2, -2, 1, -1, 2, 1, -2, -3]
-            harmony_moves = [-2, 2, -1, 1, -2, -1, 2, 3]  # Opposite tendencies
-            melody_movements[char] = melody_moves[idx - 8]
-            harmony_movements[char] = harmony_moves[idx - 8]
+            v1_moves = [2, -2, 1, -1, 2, 1, -2, -3]
+            v2_moves = [-2, 2, -1, 1, -2, -1, 2, 3]
+            v3_moves = [2, -1, 2, -2, 1, -2, 2, -3]
+            v4_moves = [-2, 1, -2, 2, -1, 2, -2, 3]
+            voice1_movements[char] = v1_moves[idx - 8]
+            voice2_movements[char] = v2_moves[idx - 8]
+            voice3_movements[char] = v3_moves[idx - 8]
+            voice4_movements[char] = v4_moves[idx - 8]
         # Next 6: larger jumps
         elif idx < 22:
-            melody_moves = [3, -3, 2, -2, 3, -3]
-            harmony_moves = [-3, 3, -2, 2, -3, 3]  # Opposite tendencies
-            melody_movements[char] = melody_moves[idx - 16]
-            harmony_movements[char] = harmony_moves[idx - 16]
+            v1_moves = [3, -3, 2, -2, 3, -3]
+            v2_moves = [-3, 3, -2, 2, -3, 3]
+            v3_moves = [3, -2, 3, -3, 2, -3]
+            v4_moves = [-3, 2, -3, 3, -2, 3]
+            voice1_movements[char] = v1_moves[idx - 16]
+            voice2_movements[char] = v2_moves[idx - 16]
+            voice3_movements[char] = v3_moves[idx - 16]
+            voice4_movements[char] = v4_moves[idx - 16]
         # Rarest 4: dramatic leaps
         else:
-            melody_moves = [5, -5, 4, -4]
-            harmony_moves = [-5, 5, -4, 4]  # Opposite tendencies
-            melody_movements[char] = melody_moves[idx - 22]
-            harmony_movements[char] = harmony_moves[idx - 22]
+            v1_moves = [5, -5, 4, -4]
+            v2_moves = [-5, 5, -4, 4]
+            v3_moves = [4, -5, 5, -4]
+            v4_moves = [-4, 5, -5, 4]
+            voice1_movements[char] = v1_moves[idx - 22]
+            voice2_movements[char] = v2_moves[idx - 22]
+            voice3_movements[char] = v3_moves[idx - 22]
+            voice4_movements[char] = v4_moves[idx - 22]
 
-    melody_movements[','] = -1
-    melody_movements['.'] = -2
-    harmony_movements[','] = 1
-    harmony_movements['.'] = 2
+    voice1_movements[','] = -1
+    voice1_movements['.'] = -2
+    voice2_movements[','] = 1
+    voice2_movements['.'] = 2
+    voice3_movements[','] = -1
+    voice3_movements['.'] = 1
+    voice4_movements[','] = 2
+    voice4_movements['.'] = -1
 
 
 # Initialize on load
@@ -124,13 +177,15 @@ def get_character_action(char):
     if char == ' ':
         return {'type': 'rest', 'duration': 0.15}
 
-    if char not in melody_movements:
+    if char not in voice1_movements:
         return None
 
-    melody_steps = melody_movements[char]
-    harmony_steps = harmony_movements[char]
+    v1_steps = voice1_movements[char]
+    v2_steps = voice2_movements[char]
+    v3_steps = voice3_movements[char]
+    v4_steps = voice4_movements[char]
 
-    return {'type': 'note', 'melody_steps': melody_steps, 'harmony_steps': harmony_steps, 'duration': 0.15,
+    return {'type': 'note', 'v1': v1_steps, 'v2': v2_steps, 'v3': v3_steps, 'v4': v4_steps, 'duration': 0.15,
             'char': char}
 
 
@@ -169,16 +224,18 @@ def generate_tone(frequency, duration=0.15, volume=0.2):
     return wave.astype(np.float32)
 
 
-def generate_dual_tone(freq1, freq2, duration=0.15, volume=0.15):
-    """Generate two-note harmony"""
+def generate_quad_tone(freq1, freq2, freq3, freq4, duration=0.15, volume=0.12):
+    """Generate four-note harmony"""
     sample_rate = 44100
     samples = int(sample_rate * duration)
     t = np.linspace(0, duration, samples, False)
 
-    # Two sine waves with harmonics
+    # Four sine waves with harmonics
     wave1 = np.sin(2 * np.pi * freq1 * t) + 0.3 * np.sin(4 * np.pi * freq1 * t)
     wave2 = np.sin(2 * np.pi * freq2 * t) + 0.3 * np.sin(4 * np.pi * freq2 * t)
-    wave = (wave1 + wave2) / 2
+    wave3 = np.sin(2 * np.pi * freq3 * t) + 0.3 * np.sin(4 * np.pi * freq3 * t)
+    wave4 = np.sin(2 * np.pi * freq4 * t) + 0.3 * np.sin(4 * np.pi * freq4 * t)
+    wave = (wave1 + wave2 + wave3 + wave4) / 4
 
     # ADSR envelope
     attack = min(0.02, duration * 0.1)
@@ -230,9 +287,11 @@ def audio_worker():
                 if action['type'] == 'rest':
                     time.sleep(action['duration'])
                 elif action['type'] == 'note':
-                    freq_melody = music_state.move_melody(action['melody_steps'], action['char'])
-                    freq_harmony = music_state.move_harmony(action['harmony_steps'], action['char'])
-                    tone = generate_dual_tone(freq_melody, freq_harmony, action['duration'])
+                    f1 = music_state.move_voice1(action['v1'], action['char'])
+                    f2 = music_state.move_voice2(action['v2'], action['char'])
+                    f3 = music_state.move_voice3(action['v3'], action['char'])
+                    f4 = music_state.move_voice4(action['v4'], action['char'])
+                    tone = generate_quad_tone(f1, f2, f3, f4, action['duration'])
                     stream.write(tone.tobytes())
 
             except queue.Empty:
@@ -270,9 +329,11 @@ def on_press(key):
                 audio_queue.put(action)
 
                 symbol = '·' if action['type'] == 'rest' else char
-                freq_m = music_state.get_frequency(music_state.melody_note_index)
-                freq_h = music_state.get_frequency(music_state.harmony_note_index)
-                print(f"{symbol} -> M:{freq_m:.1f}Hz H:{freq_h:.1f}Hz")
+                f1 = music_state.get_frequency(music_state.voice1_index)
+                f2 = music_state.get_frequency(music_state.voice2_index)
+                f3 = music_state.get_frequency(music_state.voice3_index)
+                f4 = music_state.get_frequency(music_state.voice4_index)
+                print(f"{symbol} -> V1:{f1:.0f} V2:{f2:.0f} V3:{f3:.0f} V4:{f4:.0f}Hz")
 
     except AttributeError:
         pass
@@ -293,16 +354,11 @@ def main():
     global running
 
     print("=" * 60)
-    print("Typing Music Generator - Relative Pitch Navigation")
+    print("Typing Music Generator - 4-Part Dorian Harmony")
     print("=" * 60)
-    print("\nMusical mapping:")
-    print("  Common letters (etaoinsh): small melodic steps")
-    print("  Medium letters (rdlcumfp): larger intervals, varied rhythm")
-    print("  Rare letters (gwybvk): big jumps")
-    print("  Rarest (xjqz): dramatic leaps")
-    print("  SPACE: rest/silence")
-    print("  COMMA: quick down step")
-    print("  PERIOD: longer note, resolves down")
+    print("\n4 voices, each starting in different octaves")
+    print("Dorian mode (D Dorian: D E F G A B C)")
+    print("Range: 4 octaves")
     print("\nPress ESC to exit")
     print("=" * 60)
     print()
