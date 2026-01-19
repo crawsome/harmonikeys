@@ -15,6 +15,7 @@
   - **Punctuation + symbols + special keys** are editable per voice (including SPACE/ENTER/TAB/BACKSPACE/DELETE and many symbols).
   - **Numbers** (`0–9`) drive **voices 1–2 only** (configurable per digit).
   - **Capital letters** (`A–Z`) drive **voices 3–4 only**.
+- **Silent per-voice mapping**: every mapping dropdown supports **Silent** (that voice won’t play for that key) and supports step value **0**.
 - **Punctuation defaults are frequency-tiered**: punctuation columns are sorted by English-ish usage frequency and prefilled so common symbols move less and rare symbols jump more (still fully editable).
 - **Timbres (per voice)**: multiple built-in synth timbres (sine/triangle/square/saw/pulse + presets like organ/strings/brass/bell/FM EP).
 - **Config persistence**:
@@ -65,6 +66,10 @@ Press keys while the app is running (global listener). Press **ESC** to quit.
 
 ## GUI
 
+- **Basic tab** (landing):
+  - Preset (tone arrangement)
+  - Key
+  - Tension (mode)
 - **Config tab**:
   - **Scale**: key, mode (“tension”), octaves, voice starting notes
   - **Tone**: timbre per voice
@@ -89,6 +94,7 @@ Press keys while the app is running (global listener). Press **ESC** to quit.
 - Load via **File → Load config.ini**
 - Punctuation is stored as `v1..v4` CSV lists aligned to the current punctuation column order shown in the UI.
 - Numbers are stored as `v1..v2` CSV lists aligned to digits `0..9`.
+- Any **Silent** entries are saved as the token `S` in these CSV lists.
 - Older `config.ini` formats are auto-migrated on load and then rewritten to the new format.
 
 ## Console output (matrix)
