@@ -369,6 +369,9 @@ DIGIT_SILENT = {"v3": {str(d): 0 for d in range(10)}, "v4": {str(d): 0 for d in 
 CAPITAL_MOVES = {"v1": {ch: 0 for ch in string.ascii_lowercase}, "v2": {ch: 0 for ch in string.ascii_lowercase}}
 CAPITAL_SILENT = {"v1": {ch: 0 for ch in string.ascii_lowercase}, "v2": {ch: 0 for ch in string.ascii_lowercase}}
 
+# If True, SPACE produces a rest. If False, SPACE is ignored entirely.
+SPACE_RESTS_ENABLED = True
+
 # Per-letter bucket silence flags (aligned to each group's letters list)
 LETTER_SILENT = {
     name: {"v1": [0] * len(group["letters"]), "v2": [0] * len(group["letters"]), "v3": [0] * len(group["letters"]), "v4": [0] * len(group["letters"])}
@@ -458,6 +461,9 @@ def init_letter_movements():
 
 def get_character_action(char: str, is_upper: bool, is_digit: bool):
     """Map characters to musical actions"""
+    if char == " " and not SPACE_RESTS_ENABLED:
+        return None
+
     if is_digit:
         with STATE_LOCK:
             if char not in DIGIT_MOVES["v3"]:
@@ -691,8 +697,6 @@ def audio_worker():
         frames_per_buffer=1024
     )
 
-    print("Audio thread started")
-
     try:
         while running:
             try:
@@ -766,9 +770,6 @@ def audio_worker():
                     cur_midis = [m for on, m in zip(enabled_list, cur_midis_all) if on]
                     prev_chord_name = chord_name_from_midis(prev_midis) if prev_midis else "—"
                     chord_name = chord_name_from_midis(cur_midis) if cur_midis else "—"
-                print(f"{symbol}\t{action['v1']}\t{action['v2']}\t{action['v3']}\t{action['v4']}")
-                print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
-                print(f"\tChord: {chord_name}")
 
                 if PLAYBACK_BUS is not None and action["type"] == "note":
                     PLAYBACK_BUS.updated.emit(
@@ -787,13 +788,12 @@ def audio_worker():
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Audio error: {e}")
+                pass
 
     finally:
         stream.stop_stream()
         stream.close()
         p.terminate()
-        print("Audio thread stopped")
 
 
 last_key_time = 0
@@ -855,7 +855,6 @@ def on_release(key):
         return
 
     if key == keyboard.Key.esc:
-        print("\nShutting down...")
         running = False
         audio_queue.put(None)  # Signal audio thread to stop
         QCoreApplication.quit()
@@ -1162,6 +1161,8 @@ class MelotypeConfigWindow(QMainWindow):
             }
             punct_snapshot = {vk: dict(PUNCT_MOVES[vk]) for vk in ["v1", "v2", "v3", "v4"]}
             digit_snapshot = {vk: dict(DIGIT_MOVES[vk]) for vk in ["v3", "v4"]}
+            capital_snapshot = {vk: dict(CAPITAL_MOVES[vk]) for vk in ["v1", "v2"]}
+            capital_silent_snapshot = {vk: dict(CAPITAL_SILENT[vk]) for vk in ["v1", "v2"]}
 
         for combo in [self.key_combo, self.basic_key_combo]:
             combo.blockSignals(True)
@@ -1213,12 +1214,11 @@ class MelotypeConfigWindow(QMainWindow):
             cb.blockSignals(False)
 
         for (voice_key, letter), cb in self.capital_combos.items():
-            group_name, pos = letter_group_pos(letter)
             cb.blockSignals(True)
-            if LETTER_SILENT[group_name][voice_key][pos]:
+            if capital_silent_snapshot[voice_key][letter]:
                 cb.setCurrentText("S")
             else:
-                cb.setCurrentText(str(group_snapshot[group_name][voice_key][pos]))
+                cb.setCurrentText(str(capital_snapshot[voice_key][letter]))
             cb.blockSignals(False)
 
     def _build_config_tab(self) -> QWidget:
@@ -1303,6 +1303,8 @@ class MelotypeConfigWindow(QMainWindow):
     def _build_intervals_tab(self) -> QWidget:
         tab = QWidget()
         outer = QVBoxLayout(tab)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(6)
 
         top_help = QLabel(
             "Use this page to customize how keys map to interval movements. "
@@ -1318,6 +1320,8 @@ class MelotypeConfigWindow(QMainWindow):
         contents = QWidget()
         scroll.setWidget(contents)
         layout = QVBoxLayout(contents)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
 
         interval_value_options = list(range(-8, 9))
         misc_value_options = list(range(-8, 9))
@@ -1333,10 +1337,15 @@ class MelotypeConfigWindow(QMainWindow):
             box = QGroupBox(group_name)
             layout.addWidget(box)
             box_v = QVBoxLayout(box)
+            box_v.setContentsMargins(4, 4, 4, 4)
+            box_v.setSpacing(4)
             box_help = QLabel("Use this section to set per-voice interval moves for this letter-frequency group.")
             box_help.setWordWrap(True)
             box_v.addWidget(box_help)
             grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(2)
+            grid.setVerticalSpacing(2)
             box_v.addLayout(grid)
 
             grid.addWidget(QLabel(""), 0, 0)
@@ -1365,10 +1374,15 @@ class MelotypeConfigWindow(QMainWindow):
         punct_box = QGroupBox("Punctuation")
         layout.addWidget(punct_box)
         punct_v = QVBoxLayout(punct_box)
+        punct_v.setContentsMargins(4, 4, 4, 4)
+        punct_v.setSpacing(4)
         punct_help = QLabel("Use this section to set per-voice interval moves for punctuation and special keys (SPACE/ENTER/TAB/etc).")
         punct_help.setWordWrap(True)
         punct_v.addWidget(punct_help)
         punct_grid = QGridLayout()
+        punct_grid.setContentsMargins(0, 0, 0, 0)
+        punct_grid.setHorizontalSpacing(2)
+        punct_grid.setVerticalSpacing(2)
         punct_v.addLayout(punct_grid)
         punct_grid.addWidget(QLabel(""), 0, 0)
         for col, (label, _sym) in enumerate(PUNCT_SYMBOLS):
@@ -1397,10 +1411,15 @@ class MelotypeConfigWindow(QMainWindow):
         caps_box = QGroupBox("Capitals (voices 1–2 only)")
         layout.addWidget(caps_box)
         caps_v = QVBoxLayout(caps_box)
+        caps_v.setContentsMargins(4, 4, 4, 4)
+        caps_v.setSpacing(4)
         caps_help = QLabel("Use this section to set interval moves for A–Z. Capitals only drive voices 1–2.")
         caps_help.setWordWrap(True)
         caps_v.addWidget(caps_help)
         caps_grid = QGridLayout()
+        caps_grid.setContentsMargins(0, 0, 0, 0)
+        caps_grid.setHorizontalSpacing(2)
+        caps_grid.setVerticalSpacing(2)
         caps_v.addLayout(caps_grid)
 
         caps_grid.addWidget(QLabel(""), 0, 0)
@@ -1412,16 +1431,15 @@ class MelotypeConfigWindow(QMainWindow):
             caps_grid.addWidget(QLabel(voice_key.upper()), row + 1, 0)
             for col, upper in enumerate(string.ascii_uppercase):
                 letter = upper.lower()
-                group_name, pos = letter_group_pos(letter)
                 cb = QComboBox()
                 _style_compact_combo(cb)
                 cb.addItem("S", "silent")
                 for v in interval_value_options:
                     cb.addItem(str(v), v)
-                if LETTER_SILENT[group_name][voice_key][pos]:
+                if CAPITAL_SILENT[voice_key][letter]:
                     cb.setCurrentText("S")
                 else:
-                    cb.setCurrentText(str(GROUPS[group_name][voice_key][pos]))
+                    cb.setCurrentText(str(CAPITAL_MOVES[voice_key][letter]))
                 cb.currentIndexChanged.connect(
                     lambda _idx, vk=voice_key, ltr=letter: self._on_capital_changed(vk, ltr)
                 )
@@ -1431,10 +1449,15 @@ class MelotypeConfigWindow(QMainWindow):
         digits_box = QGroupBox("Numbers (voices 3–4 only)")
         layout.addWidget(digits_box)
         digits_v = QVBoxLayout(digits_box)
+        digits_v.setContentsMargins(4, 4, 4, 4)
+        digits_v.setSpacing(4)
         digits_help = QLabel("Use this section to set interval moves for digits 0–9. Numbers only drive voices 3–4.")
         digits_help.setWordWrap(True)
         digits_v.addWidget(digits_help)
         digits_grid = QGridLayout()
+        digits_grid.setContentsMargins(0, 0, 0, 0)
+        digits_grid.setHorizontalSpacing(2)
+        digits_grid.setVerticalSpacing(2)
         digits_v.addLayout(digits_grid)
         digits_grid.addWidget(QLabel(""), 0, 0)
         for col, d in enumerate([str(x) for x in range(10)]):
@@ -1462,21 +1485,14 @@ class MelotypeConfigWindow(QMainWindow):
 
     def _on_capital_changed(self, voice_key: str, letter: str):
         cb = self.capital_combos[(voice_key, letter)]
-        group_name, pos = letter_group_pos(letter)
         with STATE_LOCK:
             if cb.currentData() == "silent":
-                GROUPS[group_name][voice_key][pos] = 0
-                LETTER_SILENT[group_name][voice_key][pos] = 1
+                CAPITAL_MOVES[voice_key][letter] = 0
+                CAPITAL_SILENT[voice_key][letter] = 1
             else:
                 value = int(cb.currentData())
-                GROUPS[group_name][voice_key][pos] = value
-                LETTER_SILENT[group_name][voice_key][pos] = 0
-            init_letter_movements()
-
-        other = self.interval_combos[(group_name, voice_key, pos)]
-        other.blockSignals(True)
-        other.setCurrentText("S" if LETTER_SILENT[group_name][voice_key][pos] else str(GROUPS[group_name][voice_key][pos]))
-        other.blockSignals(False)
+                CAPITAL_MOVES[voice_key][letter] = value
+                CAPITAL_SILENT[voice_key][letter] = 0
 
     def _scale_note_options(self) -> list[tuple[str, int]]:
         with STATE_LOCK:
@@ -1699,6 +1715,7 @@ class MelotypeConfigWindow(QMainWindow):
 
         self.use_space_rests_cb = QCheckBox("Use Spaces are Rests")
         self.use_space_rests_cb.setChecked(True)
+        self.use_space_rests_cb.stateChanged.connect(self._on_use_space_rests_changed)
         test_row.addWidget(self.use_space_rests_cb)
 
         self.play_text_btn = QPushButton("Play")
@@ -1729,6 +1746,10 @@ class MelotypeConfigWindow(QMainWindow):
         self._play_idx = 0
         self.play_text_btn.setEnabled(False)
         self._play_timer.start()
+
+    def _on_use_space_rests_changed(self, _state: int):
+        global SPACE_RESTS_ENABLED
+        SPACE_RESTS_ENABLED = self.use_space_rests_cb.isChecked()
 
     def _play_next_char(self):
         if self._play_idx >= len(self._play_text):
@@ -1795,23 +1816,6 @@ class MelotypeConfigWindow(QMainWindow):
 def main():
     global running
 
-    print("=" * 60)
-    print("Typing Music Generator - 4-Part Mode Harmony")
-    print("=" * 60)
-    print("\n4 voices, each starting in different octaves")
-    print("Mode + key are configurable in the GUI")
-    print("Range: configurable octaves")
-    print("\nPress ESC to exit")
-    print("=" * 60)
-    print()
-
-    with STATE_LOCK:
-        n1 = music_state.get_note_name(music_state.voice1_index)
-        n2 = music_state.get_note_name(music_state.voice2_index)
-        n3 = music_state.get_note_name(music_state.voice3_index)
-        n4 = music_state.get_note_name(music_state.voice4_index)
-    print(f"\t{n1}\t{n2}\t{n3}\t{n4}")
-
     load_config()
 
     # Start audio thread
@@ -1833,13 +1837,12 @@ def main():
         listener.start()
         app.exec()
     except KeyboardInterrupt:
-        print("\nInterrupted...")
+        pass
     finally:
         running = False
         audio_queue.put(None)
         listener.stop()
         audio_thread.join(timeout=2)
-        print("Goodbye!")
 
 
 if __name__ == "__main__":
