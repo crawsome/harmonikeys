@@ -364,6 +364,11 @@ PUNCT_MOVES = {"v1": {}, "v2": {}, "v3": {}, "v4": {}}
 PUNCT_SILENT = {"v1": {}, "v2": {}, "v3": {}, "v4": {}}
 DIGIT_SILENT = {"v3": {str(d): 0 for d in range(10)}, "v4": {str(d): 0 for d in range(10)}}
 
+# Capitals (A–Z) are their own mapping table for voices 1–2 only.
+# Stored as lowercase keys a–z; triggered by is_upper=True.
+CAPITAL_MOVES = {"v1": {ch: 0 for ch in string.ascii_lowercase}, "v2": {ch: 0 for ch in string.ascii_lowercase}}
+CAPITAL_SILENT = {"v1": {ch: 0 for ch in string.ascii_lowercase}, "v2": {ch: 0 for ch in string.ascii_lowercase}}
+
 # Per-letter bucket silence flags (aligned to each group's letters list)
 LETTER_SILENT = {
     name: {"v1": [0] * len(group["letters"]), "v2": [0] * len(group["letters"]), "v3": [0] * len(group["letters"]), "v4": [0] * len(group["letters"])}
@@ -473,6 +478,26 @@ def get_character_action(char: str, is_upper: bool, is_digit: bool):
             "char": char,
         }
 
+    if is_upper:
+        with STATE_LOCK:
+            if char not in CAPITAL_MOVES["v1"]:
+                return None
+            v1_steps = CAPITAL_MOVES["v1"][char]
+            v2_steps = CAPITAL_MOVES["v2"][char]
+            v1_on = CAPITAL_SILENT["v1"][char] == 0
+            v2_on = CAPITAL_SILENT["v2"][char] == 0
+        return {
+            "type": "note",
+            "v1": v1_steps,
+            "v2": v2_steps,
+            "v3": 0,
+            "v4": 0,
+            "enabled": (v1_on, v2_on, False, False),
+            "source": "capitals",
+            "duration": 0.15,
+            "char": char,
+        }
+
     with STATE_LOCK:
         if char not in voice1_movements:
             return None
@@ -510,19 +535,6 @@ def get_character_action(char: str, is_upper: bool, is_digit: bool):
         (v1_steps == 0 and v2_steps == 0 and v3_steps == 0 and v4_steps == 0) or (not (v1_on or v2_on or v3_on or v4_on))
     ):
         return {"type": "rest", "duration": 0.15, "char": "·", "v1": 0, "v2": 0, "v3": 0, "v4": 0}
-
-    if is_upper:
-        return {
-            "type": "note",
-            "v1": v1_steps,
-            "v2": v2_steps,
-            "v3": 0,
-            "v4": 0,
-            "enabled": (v1_on, v2_on, False, False),
-            "source": "letters",
-            "duration": 0.15,
-            "char": char,
-        }
 
     return {
         "type": "note",
@@ -702,8 +714,8 @@ def audio_worker():
                     with STATE_LOCK:
                         enabled = action.get("enabled", (True, True, True, True))
                         source = action.get("source", "letters")
-                        v1_map = voice1_movements
-                        v2_map = voice2_movements
+                        v1_map = CAPITAL_MOVES["v1"] if source == "capitals" else voice1_movements
+                        v2_map = CAPITAL_MOVES["v2"] if source == "capitals" else voice2_movements
                         v3_map = DIGIT_MOVES["v3"] if source == "digits" else voice3_movements
                         v4_map = DIGIT_MOVES["v4"] if source == "digits" else voice4_movements
                         prev_notes = [
@@ -935,6 +947,12 @@ def save_config():
             [SILENT_TOKEN if DIGIT_SILENT[voice_key][str(x)] else str(DIGIT_MOVES[voice_key][str(x)]) for x in range(10)]
         )
 
+    cfg["capitals"] = {}
+    for voice_key in ["v1", "v2"]:
+        cfg["capitals"][voice_key] = _csv_tokens(
+            [SILENT_TOKEN if CAPITAL_SILENT[voice_key][ch] else str(CAPITAL_MOVES[voice_key][ch]) for ch in string.ascii_lowercase]
+        )
+
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         cfg.write(f)
 
@@ -1016,6 +1034,24 @@ def load_config():
                         if k in cfg["numbers"]:
                             DIGIT_MOVES[dst_voice][d] = int(cfg["numbers"][k])
                             DIGIT_SILENT[dst_voice][d] = 0
+
+        if "capitals" in cfg and all(vk in cfg["capitals"] for vk in ["v1", "v2"]):
+            for voice_key in ["v1", "v2"]:
+                tokens = _parse_csv_tokens(cfg["capitals"][voice_key])
+                for i, ch in enumerate(string.ascii_lowercase):
+                    tok = tokens[i]
+                    if tok == SILENT_TOKEN:
+                        CAPITAL_MOVES[voice_key][ch] = 0
+                        CAPITAL_SILENT[voice_key][ch] = 1
+                    else:
+                        CAPITAL_MOVES[voice_key][ch] = int(tok)
+                        CAPITAL_SILENT[voice_key][ch] = 0
+        else:
+            for voice_key in ["v1", "v2"]:
+                for ch in string.ascii_lowercase:
+                    group_name, pos = letter_group_pos(ch)
+                    CAPITAL_MOVES[voice_key][ch] = int(GROUPS[group_name][voice_key][pos])
+                    CAPITAL_SILENT[voice_key][ch] = int(LETTER_SILENT[group_name][voice_key][pos])
 
         init_letter_movements()
         save_config()
