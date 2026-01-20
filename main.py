@@ -753,7 +753,7 @@ def audio_worker():
                         tone = generate_quad_tone(f1, f2, f3, f4, action["duration"], enabled=enabled)
                     stream.write(tone.tobytes())
 
-                symbol = action['char']
+                symbol = action.get("display_char", action["char"])
                 with STATE_LOCK:
                     n1 = music_state.get_note_name(music_state.voice1_index)
                     n2 = music_state.get_note_name(music_state.voice2_index)
@@ -838,6 +838,10 @@ def on_press(key):
             action = None
 
         if action:
+            if char_raw.isalpha() and is_upper:
+                action["display_char"] = char_raw.upper()
+            else:
+                action["display_char"] = char_raw
             # Queue the action instead of playing directly
             audio_queue.put(action)
 
@@ -853,12 +857,6 @@ def on_release(key):
     if key in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r):
         shift_down = False
         return
-
-    if key == keyboard.Key.esc:
-        running = False
-        audio_queue.put(None)  # Signal audio thread to stop
-        QCoreApplication.quit()
-        return False
 
 
 def _csv_ints(values: list[int]) -> str:
@@ -1775,6 +1773,10 @@ class MelotypeConfigWindow(QMainWindow):
             action = get_character_action(ch_raw, is_upper=False, is_digit=False)
 
         if action and not (ch_raw == " " and not self.use_space_rests_cb.isChecked() and action.get("type") == "rest"):
+            if ch_raw.isalpha() and ch_raw.isupper():
+                action["display_char"] = ch_raw
+            else:
+                action["display_char"] = ch_raw
             audio_queue.put(action)
 
     def _on_interval_changed(self, group_name: str, voice_key: str, pos: int):
